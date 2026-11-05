@@ -52,7 +52,8 @@ class HashingEmbedder:
             # blake2b rather than hash(): Python randomizes str hashes between runs.
             digest = int.from_bytes(blake2b(gram.encode(), digest_size=8).digest(), "big")
             vector[digest % self._dim] += 1.0 if digest >> 63 else -1.0
-        return np.sign(vector) * np.log1p(np.abs(vector))
+        damped: Vector = np.sign(vector) * np.log1p(np.abs(vector))
+        return damped
 
     def embed_documents(self, texts: Sequence[str]) -> Vector:
         if not texts:
