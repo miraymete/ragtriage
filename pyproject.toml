@@ -4,16 +4,20 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ragtriage"
-version = "0.1.0"
+version = "0.2.0"
 description = "Measure RAG pipelines, compare configurations, and find out where the failures come from."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
 keywords = ["rag", "evaluation", "information-retrieval", "llm", "turkish"]
-dependencies = ["pydantic>=2.6"]
+dependencies = ["numpy>=1.26", "pydantic>=2.6", "pyyaml>=6", "typer>=0.12"]
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "hypothesis>=6", "ruff>=0.6", "mypy>=1.10"]
+embeddings = ["sentence-transformers>=3"]
+dev = ["pytest>=8", "hypothesis>=6", "ruff>=0.6", "mypy>=1.10", "types-PyYAML"]
+
+[project.scripts]
+ragtriage = "ragtriage.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/ragtriage"]
@@ -35,3 +39,7 @@ ignore = ["RUF001", "RUF002", "RUF003"]
 strict = true
 files = ["src"]
 plugins = ["pydantic.mypy"]
+
+[[tool.mypy.overrides]]
+module = "sentence_transformers.*"
+ignore_missing_imports = true

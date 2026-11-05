@@ -1,0 +1,46 @@
+# Compare chunking strategies and retrievers on a small Turkish corpus. Needs no API key.
+#
+#   ragtriage run examples/turkish_quickstart/config.yaml --failures
+
+documents: docs
+dataset: qa.jsonl
+k: 3
+depth: 20
+
+experiments:
+  - name: fixed 300, naive
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever: {type: bm25, tokenizer: naive}
+
+  - name: fixed 300, turkish
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever: {type: bm25, tokenizer: turkish}
+
+  - name: fixed 300, prefix
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+
+  - name: sentence 300, prefix
+    chunker: {type: sentence, max_chars: 300}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+
+  - name: recursive 300, prefix
+    chunker: {type: recursive, size: 300, overlap: 50}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+
+  - name: sentence 300, hashing
+    chunker: {type: sentence, max_chars: 300}
+    retriever:
+      type: vector
+      embedder: {type: hashing}
+
+  # Uncomment to try a real model after: pip install "ragtriage[embeddings]"
+  # The first run downloads the model.
+  #
+  # - name: sentence 300, multilingual MiniLM
+  #   chunker: {type: sentence, max_chars: 300}
+  #   retriever:
+  #     type: vector
+  #     embedder:
+  #       type: sentence_transformers
+  #       model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
