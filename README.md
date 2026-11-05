@@ -72,6 +72,22 @@ What this run shows:
 
 **Read these numbers as a demo, not a benchmark.** The test set has 21 scored questions, so one question moves recall by about 0.05. The same author wrote the documents and the questions, which makes the questions easier than real user queries. A real comparison needs a larger, independent test set.
 
+## Example: the test set decides which retriever wins
+
+This run compares keyword search with a real embedding model, [`paraphrase-multilingual-MiniLM-L12-v2`](https://huggingface.co/sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2). It uses two question sets over the same documents. The first is the set above. The second has 10 questions written to avoid the documents' wording. On average, 33% of a question's word stems appear in its answer passage in the first set, and 2% in the second.
+
+| Retriever (fixed 300) | Same wording: Recall@3 | MRR | Reworded: Recall@3 | MRR | Query ms |
+|---|---|---|---|---|---|
+| BM25, prefix tokens | 1.000 | 0.952 | 0.300 | 0.338 | 0.1 |
+| Hashing n-grams | 1.000 | 0.968 | 0.500 | 0.355 | 0.5 |
+| MiniLM | 0.857 | 0.758 | 0.900 | 0.742 | ~80 |
+
+- **The ranking flips.** BM25 is best when questions reuse the documents' words and worst when they don't. MiniLM is the opposite.
+- **A test set written from the documents favors keyword search.** Questions written by someone reading the source tend to copy its words. Real users usually don't. This is the strongest argument for testing with real queries.
+- **The embedding model costs about 1000× more per query.** Latency was measured on CPU on one laptop, so treat it as a rough ratio.
+
+The reworded set has only 10 questions, and the same author wrote it, so it shows the direction of the effect rather than its size. With almost every chunk retrieved at depth 20 on a corpus this small, the ranking and retrieval columns mean little for the vector rows. Reproduce with `config_embeddings.yaml` and `config_paraphrase.yaml`. The first run downloads about 460 MB.
+
 ## Why evidence is a span, not a chunk id
 
 Most RAG test sets label the correct chunk ids. Those ids change when the chunking changes, so the labels cannot fairly compare a 256-character run with a 512-character run.
@@ -130,7 +146,7 @@ The `sentence` chunker also handles Turkish punctuation. The period in "10. yüz
 - **The 0.5 overlap threshold is a choice.** Change it with `min_overlap` and check whether your conclusions hold.
 - **No significance testing yet.** Small differences between configurations may be noise.
 - **Chunk sizes are in characters, not tokens.** The `fixed` chunker can also cut through a word.
-- **The Sentence Transformers adapter is only tested against a stub.** No real model has been run yet, so the demo has no real embedding results.
+- **CI does not run a real embedding model.** It tests the adapter against a stub to avoid the download. The results above come from a manual run.
 - **The `hashing` embedder has no notion of meaning.** It matches similar spelling and cannot connect synonyms, so it is only a baseline.
 - **Quality of the answer isn't measured yet.** Good retrieval doesn't guarantee a good answer.
 
@@ -168,7 +184,7 @@ Metric tests use values worked out by hand, plus property-based tests with [Hypo
 
 - [x] Retrieval metrics, span-based evidence, failure types, BM25 baseline
 - [x] Sentence and recursive chunking, vector retrieval, YAML experiments, CLI
-- [ ] Results from real embedding models on the demo
+- [x] Results from a real embedding model on the demo
 - [ ] Generation metrics with an LLM judge, caching, and async calls
 - [ ] HTML report with the worst examples and significance testing
 - [ ] Synthetic test sets, including unanswerable questions
