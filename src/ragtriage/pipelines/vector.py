@@ -13,7 +13,8 @@ from ragtriage.pipelines.embeddings import Embedder, Vector
 def _normalize(vectors: Vector) -> Vector:
     norms = np.linalg.norm(vectors, axis=-1, keepdims=True)
     # A text with no tokens embeds to all zeros. It must score 0 rather than divide by zero.
-    return np.divide(vectors, norms, out=np.zeros_like(vectors), where=norms > 0)
+    normalized: Vector = np.divide(vectors, norms, out=np.zeros_like(vectors), where=norms > 0)
+    return normalized
 
 
 class VectorRetriever:
