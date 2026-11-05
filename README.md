@@ -1,5 +1,7 @@
 # ragtriage
 
+[![CI](https://github.com/miraymete/ragtriage/actions/workflows/ci.yml/badge.svg)](https://github.com/miraymete/ragtriage/actions/workflows/ci.yml)
+
 Measure RAG pipelines, compare configurations, and find out where the failures come from, with first-class support for Turkish.
 
 > **Status: early.** Retrieval evaluation works and is tested. Generation metrics (faithfulness, answer relevance) are next. See the [roadmap](#roadmap).
