@@ -1,0 +1,2 @@
+# Gold evidence is stored as character offsets, so line endings must not change between platforms.
+* text=auto eol=lf

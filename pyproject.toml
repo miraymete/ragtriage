@@ -1,0 +1,37 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "ragtriage"
+version = "0.1.0"
+description = "Measure RAG pipelines, compare configurations, and find out where the failures come from."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+keywords = ["rag", "evaluation", "information-retrieval", "llm", "turkish"]
+dependencies = ["pydantic>=2.6"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "hypothesis>=6", "ruff>=0.6", "mypy>=1.10"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/ragtriage"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF"]
+# RUF001-3 flag the Turkish letter "ı" as a confusable "i". Here it is the point.
+ignore = ["RUF001", "RUF002", "RUF003"]
+
+[tool.mypy]
+strict = true
+files = ["src"]
+plugins = ["pydantic.mypy"]

@@ -1,0 +1,23 @@
+{"id": "q01", "question": "Göbeklitepe hangi ile bağlıdır?", "evidence": [{"doc_id": "gobeklitepe", "quote": "Göbeklitepe, Şanlıurfa il merkezinin yaklaşık 15 kilometre kuzeydoğusunda"}]}
+{"id": "q02", "question": "Göbeklitepe kazılarını kim başlattı?", "evidence": [{"doc_id": "gobeklitepe", "quote": "Kazılar 1995 yılında Alman arkeolog Klaus Schmidt başkanlığında başlamıştır."}]}
+{"id": "q03", "question": "T biçimli taşların üstünde hangi hayvanlar işlenmiştir?", "evidence": [{"doc_id": "gobeklitepe", "quote": "üzerinde tilki, yaban domuzu, turna ve akrep gibi hayvan kabartmaları görülür"}]}
+{"id": "q04", "question": "peribacaları nasıl oluşur", "evidence": [{"doc_id": "kapadokya", "quote": "Yağmur, rüzgâr ve sıcaklık farkları yumuşak tüfü zaman içinde aşındırmış"}]}
+{"id": "q05", "question": "Kapadokya'daki tüfü hangi volkanlar oluşturdu?", "evidence": [{"doc_id": "kapadokya", "quote": "Erciyes, Hasandağı ve Göllüdağ volkanlarının püskürttüğü küllerin"}]}
+{"id": "q06", "question": "Derinkuyu yeraltı şehrinde neler var?", "evidence": [{"doc_id": "kapadokya", "quote": "Derinkuyu Yeraltı Şehri'nde havalandırma bacaları, ahırlar, şaraphaneler"}]}
+{"id": "q07", "question": "Türkiye'nin en büyük gölünün alanı ne kadar?", "evidence": [{"doc_id": "van_golu", "quote": "yaklaşık 3700 kilometrekarelik yüzölçümüyle Türkiye'nin en büyük gölüdür"}]}
+{"id": "q08", "question": "Van Gölü nasıl meydana geldi?", "evidence": [{"doc_id": "van_golu", "quote": "Nemrut Dağı'nın volkanik püskürmeleriyle önünün kapanması sonucu oluşmuştur"}]}
+{"id": "q09", "question": "inci kefali neden göç ediyor", "evidence": [{"doc_id": "van_golu", "quote": "inci kefali, her yıl ilkbaharda üremek için tatlı su akarsularına doğru göç eder"}]}
+{"id": "q10", "question": "Akdamar'daki kiliseyi kim yaptırdı?", "evidence": [{"doc_id": "van_golu", "quote": "10. yüzyılda Vaspurakan Kralı Gagik döneminde yapılan Surp Haç Kilisesi"}]}
+{"id": "q11", "question": "Sinan nerede doğdu?", "evidence": [{"doc_id": "mimar_sinan", "quote": "Kayseri yakınlarındaki Ağırnas köyünde"}]}
+{"id": "q12", "question": "Sinan ustalık eseri olarak hangi camiyi gösterir?", "evidence": [{"doc_id": "mimar_sinan", "quote": "Edirne'deki Selimiye Camii'ni ustalık eseri"}]}
+{"id": "q13", "question": "MİMAR SİNAN NE ZAMAN BAŞMİMAR OLDU", "evidence": [{"doc_id": "mimar_sinan", "quote": "1538 yılında Kanuni Sultan Süleyman döneminde başmimar olmuş"}]}
+{"id": "q14", "question": "Rize'deki ilk çay fabrikası ne zaman açıldı?", "evidence": [{"doc_id": "rize_cay", "quote": "Rize'de ilk çay fabrikası 1947 yılında kurulmuştur"}]}
+{"id": "q15", "question": "Çay yetiştirmek için nasıl bir iklim ve toprak gerekir?", "evidence": [{"doc_id": "rize_cay", "quote": "Çay, bol yağış ve asitli toprak isteyen bir bitkidir"}]}
+{"id": "q16", "question": "ÇAYKUR hangi yıl kuruldu?", "evidence": [{"doc_id": "rize_cay", "quote": "1971'de kurulan ÇAYKUR"}]}
+{"id": "q17", "question": "iznik çinilerinin kırmızı rengi ne zaman ortaya çıktı", "evidence": [{"doc_id": "iznik", "quote": "16. yüzyılın ortalarında görülmeye başlayan kabartma mercan kırmızısıdır"}]}
+{"id": "q18", "question": "İznik çinisinin hamurunda ne bulunur?", "evidence": [{"doc_id": "iznik", "quote": "yüksek oranda kuvars içeren hamuru"}]}
+{"id": "q19", "question": "İznik çinileri hangi camilerde görülebilir?", "evidence": [{"doc_id": "iznik", "quote": "İstanbul'daki Rüstem Paşa Camii ile Sultanahmet Camii"}]}
+{"id": "q20", "question": "Selimiye Camii ile Göbeklitepe UNESCO listesine hangi yıllarda alındı?", "evidence": [{"doc_id": "mimar_sinan", "quote": "Selimiye Camii 1575 yılında tamamlanmış, 2011 yılında UNESCO Dünya Mirası Listesi'ne alınmıştır"}, {"doc_id": "gobeklitepe", "quote": "Göbeklitepe 2018 yılında UNESCO Dünya Mirası Listesi'ne alınmıştır"}]}
+{"id": "q21", "question": "Kapadokya ve Van Gölü'nün oluşumunda volkanların rolü nedir?", "evidence": [{"doc_id": "kapadokya", "quote": "Erciyes, Hasandağı ve Göllüdağ volkanlarının püskürttüğü küllerin sertleşerek tüf katmanları oluşturmasıyla"}, {"doc_id": "van_golu", "quote": "Nemrut Dağı'nın volkanik püskürmeleriyle önünün kapanması sonucu oluşmuştur"}]}
+{"id": "q22", "question": "Efes Antik Kenti hangi ildedir?"}
+{"id": "q23", "question": "Türkiye'nin en yüksek dağı hangisidir?"}
