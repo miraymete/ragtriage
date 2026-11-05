@@ -1,0 +1,48 @@
+# Compare a real embedding model with the keyword and hashing baselines. Each chunker runs all three.
+#
+#   pip install -e ".[embeddings]"
+#   ragtriage run examples/turkish_quickstart/config_embeddings.yaml --failures
+#
+# The first run downloads the model from Hugging Face (about 460 MB).
+
+documents: docs
+dataset: qa.jsonl
+k: 3
+depth: 20
+
+experiments:
+  - name: fixed 300, BM25 prefix
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+
+  - name: fixed 300, hashing
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever:
+      type: vector
+      embedder: {type: hashing}
+
+  - name: fixed 300, MiniLM
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever:
+      type: vector
+      embedder:
+        type: sentence_transformers
+        model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+
+  - name: sentence 300, BM25 prefix
+    chunker: {type: sentence, max_chars: 300}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+
+  - name: sentence 300, hashing
+    chunker: {type: sentence, max_chars: 300}
+    retriever:
+      type: vector
+      embedder: {type: hashing}
+
+  - name: sentence 300, MiniLM
+    chunker: {type: sentence, max_chars: 300}
+    retriever:
+      type: vector
+      embedder:
+        type: sentence_transformers
+        model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2

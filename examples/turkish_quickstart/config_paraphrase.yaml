@@ -1,0 +1,28 @@
+# The same comparison on questions written to avoid the documents' wording.
+#
+#   pip install -e ".[embeddings]"
+#   ragtriage run examples/turkish_quickstart/config_paraphrase.yaml --failures
+
+documents: docs
+dataset: qa_paraphrase.jsonl
+k: 3
+depth: 20
+
+experiments:
+  - name: fixed 300, BM25 prefix
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+
+  - name: fixed 300, hashing
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever:
+      type: vector
+      embedder: {type: hashing}
+
+  - name: fixed 300, MiniLM
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever:
+      type: vector
+      embedder:
+        type: sentence_transformers
+        model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2

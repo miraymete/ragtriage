@@ -1,0 +1,10 @@
+{"id": "p01", "question": "Urfa'daki taş devri kalıntılarını gün yüzüne çıkaran araştırmacı kim?", "evidence": [{"doc_id": "gobeklitepe", "quote": "Kazılar 1995 yılında Alman arkeolog Klaus Schmidt başkanlığında başlamıştır."}]}
+{"id": "p02", "question": "Bölgedeki sivri taş sütunları hangi doğa olayları biçimlendirdi?", "evidence": [{"doc_id": "kapadokya", "quote": "Yağmur, rüzgâr ve sıcaklık farkları yumuşak tüfü zaman içinde aşındırmış"}]}
+{"id": "p03", "question": "Toprağın altına kurulan kentlerde temiz hava nasıl sağlanıyordu?", "evidence": [{"doc_id": "kapadokya", "quote": "Derinkuyu Yeraltı Şehri'nde havalandırma bacaları, ahırlar, şaraphaneler"}]}
+{"id": "p04", "question": "Ülkedeki en geniş iç su hangisidir?", "evidence": [{"doc_id": "van_golu", "quote": "yaklaşık 3700 kilometrekarelik yüzölçümüyle Türkiye'nin en büyük gölüdür"}]}
+{"id": "p05", "question": "Balıklar yumurta bırakmak için nereye yüzer?", "evidence": [{"doc_id": "van_golu", "quote": "inci kefali, her yıl ilkbaharda üremek için tatlı su akarsularına doğru göç eder"}]}
+{"id": "p06", "question": "Osmanlı'nın en ünlü yapı ustası hangi köyden geliyordu?", "evidence": [{"doc_id": "mimar_sinan", "quote": "Kayseri yakınlarındaki Ağırnas köyünde"}]}
+{"id": "p07", "question": "Usta mimarın olgunluk dönemi yapıtı olarak gördüğü ibadethane hangisi?", "evidence": [{"doc_id": "mimar_sinan", "quote": "Edirne'deki Selimiye Camii'ni ustalık eseri"}]}
+{"id": "p08", "question": "Kuzeydoğu kıyılarımızın ünlü sıcak içeceği için ilk üretim tesisi ne zaman açıldı?", "evidence": [{"doc_id": "rize_cay", "quote": "Rize'de ilk çay fabrikası 1947 yılında kurulmuştur"}]}
+{"id": "p09", "question": "Yeşil yapraklı içecek bitkisi ne tür bir ortamda iyi büyür?", "evidence": [{"doc_id": "rize_cay", "quote": "Çay, bol yağış ve asitli toprak isteyen bir bitkidir"}]}
+{"id": "p10", "question": "Osmanlı süslü seramiklerinin dayanıklılığı hangi hammaddeden geliyor?", "evidence": [{"doc_id": "iznik", "quote": "yüksek oranda kuvars içeren hamuru"}]}
