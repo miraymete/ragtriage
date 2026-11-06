@@ -12,3 +12,7 @@ build/
 .ruff_cache/
 .hypothesis/
 .coverage
+
+# Local run outputs
+results/
+.ragtriage_cache/

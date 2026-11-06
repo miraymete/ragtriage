@@ -4,7 +4,7 @@
 
 Measure RAG pipelines, compare configurations, and find out where the failures come from, with first-class support for Turkish.
 
-> **Status: early.** Retrieval evaluation works and is tested. Generation metrics (faithfulness, answer relevance) are next. See the [roadmap](#roadmap).
+> **Status: early.** Retrieval evaluation works and is tested. Answer generation, abstention checks, faithfulness and answer relevance are experimental: they are tested only against a scripted fake model and have not yet been run against a real API, and the judges are not validated against human labels. See the [roadmap](#roadmap).
 
 ## Quickstart
 
@@ -140,6 +140,104 @@ Python's `str.lower()` is wrong for Turkish, and the error is silent:
 
 The `sentence` chunker also handles Turkish punctuation. The period in "10. yüzyılda" or "1. Dünya Savaşı" marks an ordinal number, and a generic sentence splitter would end the sentence there.
 
+## Answer generation (experimental)
+
+Add a `generation` block to a config to answer every question from the top `k` chunks of each experiment:
+
+```yaml
+generation:
+  generator:
+    provider: anthropic          # pip install -e ".[anthropic]"
+    model: claude-haiku-5-5      # any model ID
+    # effort: low                # optional; omitted means the model's default
+    # price_per_mtok: {input_per_mtok: ..., output_per_mtok: ...}   # without it, cost is n/a
+```
+
+The model returns `{"abstained": bool, "answer": str}`. For each question, the JSON output records the answer, whether the model abstained, the context spans it saw, the model, the prompt version, token usage, latency, and cost.
+
+So far this measures one thing: **does the model abstain when it should?**
+
+- The rates use the test set's labels. Questions with no evidence are *labeled unanswerable from this corpus*, and abstaining on them is correct.
+- Abstaining on an answerable question counts as a false abstention, even when retrieval missed the evidence. The report splits these by whether gold evidence was in the top-k chunks actually sent to the model (`evidence_in_context`). An abstention without the evidence points at retrieval more than at the model. Evidence being in context says what the model could see, not that its answer is right.
+- Refusals, responses cut off at `max_tokens`, invalid JSON, and API errors are failed generations. They never enter a rate, and one failed question does not stop the others. An error that fails every request (credentials, permission, unknown model) stops the run, but the answers produced so far are still printed and saved.
+
+**Answers are not checked for correctness yet.** A fluent answer here is not evidence that it is right. The run calls a paid API, and the SDK reads credentials from the environment; ragtriage never reads or prints them.
+
+**Cost is an estimate.** It uses the token counts the provider reports, including for failed answers, which are still billed. It leaves out calls that failed without reporting usage (counted separately as unknown) and any retries the SDK made before a final response. Haiku's higher price for prompts over 100,000 tokens and prompt-cache pricing are not modeled.
+
+### Faithfulness (experimental)
+
+Add a `judge` to the `generation` block to check whether each answer's claims are supported by the chunks the generator saw:
+
+```yaml
+generation:
+  generator: {provider: anthropic, model: claude-haiku-5-5}
+  judge: {provider: anthropic, model: claude-sonnet-5-5}   # optional; a different model is safer
+```
+
+The judge makes two calls per answer, with versioned Turkish prompts:
+
+1. **Claims.** It splits the answer into atomic claims. Code gives each claim a stable id (`c1`, `c2`, ...). The prompt asks the judge not to add information that is not in the answer, but code cannot fully guarantee that.
+2. **Verdicts.** It labels each claim `supported`, `unsupported` or `uncertain` against the passages. A `supported` verdict must name a passage that was shown and quote it. Code checks that the passage exists and that the quote appears in it verbatim (whitespace aside). **A quote being present does not prove the passage supports the claim's meaning.**
+
+Scores:
+
+| Situation | Result |
+|---|---|
+| Every claim has a definite verdict | supported / total claims |
+| Any claim is `uncertain` | not applicable (`uncertain_claims`); counts are kept |
+| Abstained, empty, or no claims | not applicable, never 1.0 |
+| API error, invalid output, a missing or duplicate claim id, or a quote that fails the check | failed, never averaged in as 0 |
+| One stage failed | no partial score; the usage of finished calls is kept |
+
+The judge sees the question, the answer and the top-k chunks, never the evidence labels or reference answers. So it also judges answers whose retrieval missed the evidence. Judge usage and cost are reported separately from the generator's.
+
+**Faithfulness measures support by the given context only.** It does not measure correctness, completeness or relevance, and the judge has not been validated against human labels.
+
+### Answer relevance (experimental)
+
+Add `relevance` to the `generation` block. It is independent of the faithfulness judge, and the embedder must be named explicitly:
+
+```yaml
+generation:
+  generator: {provider: anthropic, model: claude-haiku-5-5}
+  relevance:
+    judge: {provider: anthropic, model: claude-sonnet-5-5}
+    embedder:
+      type: sentence_transformers   # downloads on first use; hashing is a non-semantic baseline
+      model: sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+```
+
+How it works:
+
+1. A judge writes three questions that the answer could answer. It sees **only the answer**: not the original question (showing it would inflate the score), not the passages, the labels or the reference answer.
+2. Code checks for exactly three non-empty questions that differ after normalization (Turkish casing, whitespace, trailing punctuation). Invalid output fails the answer, with no automatic retry.
+3. The original question and the three questions all go through the embedder's `embed_query`. The score is the mean of the three cosine similarities.
+
+The score lies in **[-1, 1]**: negative values are kept, not clipped or rescaled. Embeddings that are zero, contain NaN or infinity, or differ in size fail the answer. Abstained, empty and failed answers are not applicable. A faithfulness failure does not skip relevance, and the other way round. Judge usage and cost are reported separately from the generator's and from faithfulness.
+
+**This is a semantic-similarity proxy.** It does not measure correctness or completeness, and a high score does not mean the question was fully answered. Embeddings are not cached. If a judge uses the generator's model, the CLI warns that it may favor its own model's answers; a different model may reduce this bias but does not remove it.
+
+### Response cache
+
+Add `cache` to the `generation` block to keep validated answers on disk and reuse them on the next run:
+
+```yaml
+generation:
+  generator: {provider: anthropic, model: claude-haiku-5-5}
+  cache:
+    enabled: true                          # false, or no cache block, means every call is made
+    path: .ragtriage_cache/responses.sqlite   # relative to the config file
+```
+
+- The key covers the provider, model, settings that change the response (such as `effort`), system and user messages, `max_tokens`, output schema, and prompt version. Credentials are never part of it.
+- Only answers that pass validation are stored. Refusals, truncated or invalid output, and API errors are not, so they are retried on the next run.
+- A cache hit adds no new tokens or cost. The report keeps the original usage separately (`cached_original_usage`), and a response that came from the scripted test model stays marked as fake.
+- An unreadable, corrupt or incompatible cache file stops the run with an error. Nothing is deleted, and the run never falls back to paid calls on its own.
+- **The cache stores questions, passages and answers as plain text.** `.ragtriage_cache/` is git-ignored; keep it out of shared folders if the documents are sensitive.
+
+**Documents are untrusted input.** The prompt marks passages as data and escapes them, so a passage cannot close its own element or pose as the question. This makes instructions hidden in a document easier for the model to ignore. It does not guarantee that the model ignores them.
+
 ## Limitations
 
 - **Larger chunks match more easily.** They are more likely to cover the evidence, which can flatter recall. Compare the `Context chars` column alongside it.
@@ -148,7 +246,10 @@ The `sentence` chunker also handles Turkish punctuation. The period in "10. yüz
 - **Chunk sizes are in characters, not tokens.** The `fixed` chunker can also cut through a word.
 - **CI does not run a real embedding model.** It tests the adapter against a stub to avoid the download. The results above come from a manual run.
 - **The `hashing` embedder has no notion of meaning.** It matches similar spelling and cannot connect synonyms, so it is only a baseline.
-- **Quality of the answer isn't measured yet.** Good retrieval doesn't guarantee a good answer.
+- **Answer quality is only partly measured.** Abstention, faithfulness and an answer-relevance proxy are; correctness is not. Neither judge is validated against human labels yet.
+- **Abstention depends on the labels.** "Unanswerable" means no evidence was labeled in this corpus, not that no answer exists anywhere.
+- **Generation has not been run against a real API yet.** Every generation, judge and cache test uses a scripted fake model and a stub embedder, so there are no real generation numbers in this README.
+- **Generation runs one question at a time.** With the cache off, re-running repeats every paid call.
 
 ## Project layout
 
@@ -162,6 +263,8 @@ src/ragtriage/
 ├── config.py             # validated YAML experiment file
 ├── runner.py             # build pipelines and run every experiment
 ├── cli.py                # ragtriage run config.yaml
+├── outcomes.py           # Scored / NotApplicable / Failed
+├── generation/           # LLM interface, FakeLLM, generator, Anthropic adapter, cache, judges
 └── pipelines/            # chunkers, tokenizers, BM25, embedders, vector search
 ```
 
@@ -185,7 +288,10 @@ Metric tests use values worked out by hand, plus property-based tests with [Hypo
 - [x] Retrieval metrics, span-based evidence, failure types, BM25 baseline
 - [x] Sentence and recursive chunking, vector retrieval, YAML experiments, CLI
 - [x] Results from a real embedding model on the demo
-- [ ] Generation metrics with an LLM judge, caching, and async calls
+- [x] Answer generation behind a provider-independent interface, with abstention rates
+- [x] Response cache and a faithfulness judge with verified support quotes
+- [x] Answer relevance from answer-only questions and embedding similarity
+- [ ] Concurrent calls and rate limiting
 - [ ] HTML report with the worst examples and significance testing
 - [ ] Synthetic test sets, including unanswerable questions
 - [ ] Judge validation against human labels, and a real Turkish case study

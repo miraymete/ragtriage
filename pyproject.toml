@@ -14,6 +14,8 @@ dependencies = ["numpy>=1.26", "pydantic>=2.6", "pyyaml>=6", "typer>=0.12"]
 
 [project.optional-dependencies]
 embeddings = ["sentence-transformers>=3"]
+# The adapter was checked against anthropic 2.6.
+anthropic = ["anthropic>=2.6"]
 dev = ["pytest>=8", "hypothesis>=6", "ruff>=0.6", "mypy>=1.10", "types-PyYAML"]
 
 [project.scripts]
@@ -44,4 +46,10 @@ plugins = ["pydantic.mypy"]
 module = ["sentence_transformers", "sentence_transformers.*"]
 ignore_missing_imports = true
 # When the extra is installed, following it pulls in all of PyTorch and takes minutes.
+follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+# CI does not install the optional SDK. Skipping it keeps local and CI type checks the same.
+module = ["anthropic", "anthropic.*"]
+ignore_missing_imports = true
 follow_imports = "skip"

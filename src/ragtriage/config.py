@@ -86,6 +86,54 @@ class Experiment(_Spec):
     retriever: RetrieverSpec
 
 
+class PriceSpec(_Spec):
+    """USD per million tokens. Prices change, so they are never built in."""
+
+    input_per_mtok: float = Field(ge=0)
+    output_per_mtok: float = Field(ge=0)
+
+
+class AnthropicSpec(_Spec):
+    provider: Literal["anthropic"]
+    model: str = Field(min_length=1)
+    max_tokens: int = Field(default=16000, ge=1)
+    # Omitted means the model's own default. This Anthropic spec has no temperature field because
+    # current Claude models reject sampling parameters; other providers' specs may have one.
+    effort: Literal["low", "medium", "high", "xhigh", "max"] | None = None
+    # Retries are done by the SDK, and only there.
+    max_retries: int = Field(default=2, ge=0)
+    timeout_s: float = Field(default=120.0, gt=0)
+    price_per_mtok: PriceSpec | None = None
+
+
+class CacheSpec(_Spec):
+    """A local SQLite cache of validated responses. Entries are plain text."""
+
+    enabled: bool = True
+    # Relative paths are resolved against the config file, like `documents` and `dataset`.
+    path: Path = Path(".ragtriage_cache/responses.sqlite")
+
+
+class RelevanceSpec(_Spec):
+    """Answer relevance. The embedder is required: nothing is chosen or downloaded silently."""
+
+    judge: AnthropicSpec
+    embedder: EmbedderSpec
+
+
+class GenerationSpec(_Spec):
+    """Answer each question from the top-k retrieved chunks of every experiment."""
+
+    generator: AnthropicSpec
+    # Optional faithfulness judge. It sees the answer and the chunks the generator saw, never the
+    # labels. A different model from the generator reduces, but does not remove, self-preference.
+    judge: AnthropicSpec | None = None
+    # Optional answer relevance, independent of the faithfulness judge above.
+    relevance: RelevanceSpec | None = None
+    # Omitted or disabled means no cache: every run makes every call.
+    cache: CacheSpec | None = None
+
+
 class EvalConfig(_Spec):
     documents: Path
     dataset: Path
@@ -93,6 +141,7 @@ class EvalConfig(_Spec):
     depth: int = 20
     min_overlap: float = Field(default=0.5, gt=0, le=1)
     experiments: tuple[Experiment, ...] = Field(min_length=1)
+    generation: GenerationSpec | None = None
 
     @model_validator(mode="after")
     def _check(self) -> Self:
@@ -117,6 +166,14 @@ def load_config(path: str | Path) -> EvalConfig:
         raise ValueError(f"{path}: expected a mapping at the top level")
     config = EvalConfig.model_validate(raw)
     base = path.resolve().parent
+    generation = config.generation
+    if generation is not None and generation.cache is not None:
+        cache = generation.cache.model_copy(update={"path": base / generation.cache.path})
+        generation = generation.model_copy(update={"cache": cache})
     return config.model_copy(
-        update={"documents": base / config.documents, "dataset": base / config.dataset}
+        update={
+            "documents": base / config.documents,
+            "dataset": base / config.dataset,
+            "generation": generation,
+        }
     )
