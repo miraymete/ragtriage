@@ -1,0 +1,26 @@
+# Answer every question from the top-k chunks and check whether the model abstains when it should.
+#
+#   pip install -e ".[anthropic]"
+#   ragtriage run examples/turkish_quickstart/config_generation.yaml --failures --out results.json
+#
+# This calls a paid API. The SDK reads credentials itself (for example ANTHROPIC_API_KEY);
+# ragtriage never reads or prints them. Answers are not checked for correctness yet.
+
+documents: docs
+dataset: qa.jsonl
+k: 3
+depth: 20
+
+experiments:
+  - name: fixed 300, BM25 prefix
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+
+generation:
+  generator:
+    provider: anthropic
+    model: claude-haiku-5-5    # a choice, not a recommendation; any model ID works here
+    # effort: low              # omit to use the model's default
+    # Prices change. Copy them from https://platform.claude.com/docs/en/about-claude/pricing
+    # to report cost; without them, cost is shown as n/a.
+    # price_per_mtok: {input_per_mtok: ..., output_per_mtok: ...}

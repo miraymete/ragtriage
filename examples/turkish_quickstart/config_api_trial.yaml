@@ -1,0 +1,32 @@
+# A small, paid trial run: one experiment, one generator, three questions, no judge.
+#
+#   pip install -e ".[anthropic]"
+#   ragtriage run examples/turkish_quickstart/config_api_trial.yaml --failures --out results/api_trial.json
+#
+# The SDK reads credentials from the environment (for example ANTHROPIC_API_KEY);
+# ragtriage never reads or prints them. Answers are not checked for correctness.
+
+documents: docs
+dataset: qa_api_trial.jsonl   # q18 (one evidence), q20 (two evidence), q22 (labeled unanswerable)
+k: 3
+depth: 20
+
+experiments:
+  - name: fixed 300, BM25 prefix
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+
+generation:
+  generator:
+    provider: anthropic
+    model: claude-haiku-5-5
+    # Short answers. Thinking also counts toward this limit, so leave some room; a response that
+    # hits it is recorded as truncated, not retried.
+    max_tokens: 1024
+    effort: low
+    # No retries, so every billed call is one the report can see.
+    max_retries: 0
+    timeout_s: 60
+    # USD per million tokens, from https://platform.claude.com/docs/en/about-claude/pricing
+    # (Claude Haiku 5.5, prompts up to 100,000 tokens), checked on 2026-11-06.
+    price_per_mtok: {input_per_mtok: 0.10, output_per_mtok: 0.50}
