@@ -144,6 +144,11 @@ class Generator:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    @property
+    def client(self) -> LLMClient:
+        """The client this generator calls, so a stopped run can say which provider failed."""
+        return self._client
+
     def context(self, run: RetrievalRun) -> tuple[RetrievedChunk, ...]:
         """The chunks the model sees: the top k. Deeper results are for retrieval triage."""
         return run.chunks[: self._k]

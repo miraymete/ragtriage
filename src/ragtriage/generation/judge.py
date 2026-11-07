@@ -237,6 +237,11 @@ class FaithfulnessJudge:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    @property
+    def client(self) -> LLMClient:
+        """The client this judge calls, so a stopped run can say which provider failed."""
+        return self._client
+
     async def _stage(
         self,
         stage: Stage,

@@ -19,7 +19,19 @@ from ragtriage.generation.judge import FaithfulnessJudge
 from ragtriage.generation.pipeline import run_generation
 from ragtriage.generation.relevance import RelevanceJudge
 from ragtriage.generation.report import GenerationReport, Rate
+from ragtriage.html_report import ReportData, render_report
 from ragtriage.metrics.retrieval import Failure
+from ragtriage.metrics.statistics import (
+    BootstrapSettings,
+    Comparison,
+    ExperimentStatistics,
+    MeanInterval,
+    PairedDifference,
+    PermutationSettings,
+    compare_experiments,
+    experiment_statistics,
+    statistic_metrics,
+)
 from ragtriage.models import QAExample, RetrievalRun
 from ragtriage.runner import (
     ExperimentResult,
@@ -64,6 +76,75 @@ def failure_list(results: Sequence[ExperimentResult]) -> str:
     return "\n".join(lines)
 
 
+def _interval(item: MeanInterval | PairedDifference) -> str:
+    if item.ci_low is None or item.ci_high is None:
+        return "no interval (n=1)"
+    return f"[{item.ci_low:.3f}, {item.ci_high:.3f}]"
+
+
+def _confidence(item: Comparison | ExperimentStatistics) -> str:
+    return f"{item.bootstrap.confidence:.0%}"
+
+
+def statistics_table(stats: Sequence[ExperimentStatistics]) -> str:
+    metrics = [m.metric for m in stats[0].metrics]
+    rows = [
+        "| Experiment | Questions | " + " | ".join(f"{m} mean [CI]" for m in metrics) + " |",
+        "|---|---|" + "---|" * len(metrics),
+    ]
+    for item in stats:
+        cells = " | ".join(
+            f"{m.mean:.3f} {_interval(m)}{' all equal' if m.note == 'constant' else ''}"
+            for m in item.metrics
+        )
+        rows.append(f"| {item.experiment} | {item.n_questions} | {cells} |")
+    return "\n".join(rows)
+
+
+def _p_value(item: PairedDifference) -> str:
+    test = item.permutation
+    if test is None:
+        return "n/a (n=1)"
+    if test.method == "exact":
+        return f"{test.p_value:.4f} (exact, {test.n_extreme}/{test.n_patterns})"
+    return f"{test.p_value:.4f} (Monte Carlo, {test.n_patterns} draws)"
+
+
+_DIFFERENCE_NOTES = {
+    "all_zero": "every question scored the same in both experiments",
+    "constant_difference": "every question has the same difference, so the interval has zero "
+    "width; that describes this sample, not new questions",
+}
+
+
+def comparison_report(comparison: Comparison) -> str:
+    rows = [
+        f"| Metric | Baseline mean | Candidate mean | Difference | {_confidence(comparison)} CI "
+        "| Higher / lower / tied | Unadjusted two-sided p |",
+        "|---|---|---|---|---|---|---|",
+    ]
+    for item in comparison.metrics:
+        rows.append(
+            f"| {item.metric} | {item.mean_baseline:.3f} | {item.mean_candidate:.3f} "
+            f"| {item.mean_difference:+.3f} | {_interval(item)} "
+            f"| {item.n_candidate_higher} / {item.n_candidate_lower} / {item.n_tied} "
+            f"| {_p_value(item)} |"
+        )
+    for item in comparison.metrics:
+        if item.note in _DIFFERENCE_NOTES:
+            rows.append(f"{item.metric}: {_DIFFERENCE_NOTES[item.note]}.")
+    return "\n".join(rows)
+
+
+STATISTICS_NOTE = (
+    "Intervals and p-values assume the questions are independent and represent the questions the "
+    "system will really face. Questions about the same document are not independent, and a small "
+    "self-written set is not a sample of real use. With few questions, bootstrap intervals tend "
+    "to be too narrow. p-values are unadjusted: checking several metrics or pairs raises the "
+    "chance of a difference that is only luck. None of this names a winner."
+)
+
+
 def _rate(rate: Rate) -> str:
     return "n/a" if rate.value is None else f"{rate.numerator}/{rate.denominator}"
 
@@ -101,6 +182,7 @@ def generation_notes(reports: Sequence[GenerationReport]) -> str:
     if any(r.n_fake for r in reports):
         lines.append("Some responses came from a scripted fake model; they are not billed usage.")
     unknown = sum(r.n_usage_unknown for r in reports)
+    unknown += sum(bool(r.stop_attempt and r.stop_attempt.sent_to_api) for r in reports)
     if unknown:
         lines.append(f"{unknown} calls failed without reported usage; their tokens are unknown.")
     if any(r.cost_usd is not None for r in reports):
@@ -211,21 +293,57 @@ def faithfulness_table(
     return "\n".join(rows)
 
 
+def _check_pair(config: EvalConfig, baseline: str, candidate: str) -> None:
+    """Fail before any work if the chosen experiments do not exist."""
+    names = [experiment.name for experiment in config.experiments]
+    unknown = [name for name in (baseline, candidate) if name not in names]
+    if unknown:
+        raise ValueError(f"unknown experiment {unknown[0]!r}; choose from {names}")
+    if baseline == candidate:
+        raise ValueError("--baseline and --candidate must name different experiments")
+
+
 @app.command()
 def run(
     config_path: Annotated[Path, typer.Argument(help="YAML file that defines the experiments.")],
     out: Annotated[Path | None, typer.Option(help="Also write full results to this JSON.")] = None,
     failures: Annotated[bool, typer.Option(help="List the failed questions.")] = False,
+    stats: Annotated[
+        bool, typer.Option(help="Add bootstrap intervals for recall@k, MRR and nDCG@k.")
+    ] = False,
+    baseline: Annotated[
+        str | None, typer.Option(help="Experiment A for a paired comparison (B - A).")
+    ] = None,
+    candidate: Annotated[
+        str | None, typer.Option(help="Experiment B for a paired comparison (B - A).")
+    ] = None,
+    confidence: Annotated[float, typer.Option(help="Bootstrap confidence level.")] = 0.95,
+    resamples: Annotated[int, typer.Option(help="Bootstrap resamples.")] = 10_000,
+    permutations: Annotated[
+        int, typer.Option(help="Random sign patterns when an exact test is too large.")
+    ] = 100_000,
+    seed: Annotated[int, typer.Option(help="Seed for resampling and random sign patterns.")] = 0,
+    html: Annotated[
+        Path | None, typer.Option(help="Also write a single-file HTML report of this run.")
+    ] = None,
 ) -> None:
     """Run every experiment in a config and print a comparison table."""
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")  # Windows consoles default to a legacy codepage.
+    if (baseline is None) != (candidate is None):
+        typer.echo("error: --baseline and --candidate must be given together", err=True)
+        raise typer.Exit(code=2)
     try:
+        bootstrap = BootstrapSettings(confidence=confidence, n_resamples=resamples, seed=seed)
+        permutation = PermutationSettings(n_draws=permutations, seed=seed)
         config = load_config(config_path)
-        examples, outputs = run_retrieval(config)
+        if baseline is not None and candidate is not None:
+            _check_pair(config, baseline, candidate)
+        retrieval = run_retrieval(config)
     except (ValueError, ImportError, OSError, yaml.YAMLError) as error:
         typer.echo(f"error: {error}", err=True)
         raise typer.Exit(code=2) from error
+    examples, outputs = retrieval.examples, retrieval.experiments
     results = [result for result, _ in outputs]
 
     typer.echo(comparison_table(results, config.k))
@@ -234,6 +352,45 @@ def run(
     skipped = results[0].report.n_unanswerable_skipped
     scored = len(results[0].report.per_example)
     typer.echo(f"\nScored {scored} questions. Skipped {skipped} unanswerable.")
+
+    metrics = statistic_metrics(config.k)
+    experiment_stats: list[ExperimentStatistics] | None = None
+    if stats:
+        experiment_stats = [
+            experiment_statistics(r.name, r.report, metrics, bootstrap) for r in results
+        ]
+        typer.echo(
+            f"\nRetrieval statistics ({scored} questions, {skipped} unanswerable excluded; "
+            f"percentile bootstrap, {_confidence(experiment_stats[0])} CI, "
+            f"{resamples} resamples, seed {seed})\n"
+        )
+        typer.echo(statistics_table(experiment_stats))
+    comparison: Comparison | None = None
+    if baseline is not None and candidate is not None:
+        by_name = {r.name: r.report for r in results}
+        comparison = compare_experiments(
+            (baseline, by_name[baseline]),
+            (candidate, by_name[candidate]),
+            metrics,
+            bootstrap,
+            permutation,
+        )
+        typer.echo(
+            f"\nPaired comparison: candidate {candidate!r} - baseline {baseline!r} "
+            f"({comparison.n_questions} questions, {skipped} unanswerable excluded; "
+            f"paired percentile bootstrap, {resamples} resamples, seed {seed}; "
+            "sign-flip permutation test)\n"
+        )
+        typer.echo(comparison_report(comparison))
+    if stats or comparison is not None:
+        if experiment_stats is not None and any(
+            m.note == "constant" for s in experiment_stats for m in s.metrics
+        ):
+            typer.echo(
+                "\n'all equal': every question has the same score, so the interval has zero "
+                "width. That describes this sample, not certainty about new questions."
+            )
+        typer.echo("\n" + STATISTICS_NOTE)
 
     reports: list[GenerationReport] | None = None
     if config.generation is not None:
@@ -266,11 +423,37 @@ def run(
 
     if out:
         payload: list[dict[str, Any]] = [result.model_dump(mode="json") for result in results]
+        if experiment_stats is not None:
+            for item, stat in zip(payload, experiment_stats, strict=True):
+                item["statistics"] = stat.model_dump(mode="json")
+        if comparison is not None:
+            # Stored on the candidate's entry, so the top level stays a list of experiments.
+            for item in payload:
+                if item["name"] == comparison.candidate:
+                    item["comparison"] = comparison.model_dump(mode="json")
         if reports is not None:
             for item, report in zip(payload, reports, strict=False):
                 item["generation"] = report.model_dump(mode="json")
         out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         typer.echo(f"Wrote {out}")
+
+    if html:
+        page = render_report(
+            ReportData(
+                source=str(config_path),
+                k=config.k,
+                depth=config.depth,
+                min_overlap=config.min_overlap,
+                documents=retrieval.documents,
+                examples=examples,
+                experiments=outputs,
+                statistics=experiment_stats,
+                comparison=comparison,
+                generation=reports,
+            )
+        )
+        html.write_text(page, encoding="utf-8")
+        typer.echo(f"Wrote {html}")
 
     stopped = next((r.stopped for r in reports or [] if r.stopped), None)
     if stopped:

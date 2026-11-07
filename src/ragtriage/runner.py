@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from statistics import fmean
 from time import perf_counter
 
@@ -157,14 +158,21 @@ def build_relevance(spec: GenerationSpec) -> RelevanceJudge | None:
     )
 
 
+@dataclass(frozen=True)
+class RetrievalOutputs:
+    """Everything one retrieval pass produced, kept for generation and the HTML report."""
+
+    documents: dict[str, Document]
+    examples: list[QAExample]
+    experiments: list[tuple[ExperimentResult, list[RetrievalRun]]]
+
+
 def run_experiments(config: EvalConfig) -> list[ExperimentResult]:
-    return [result for result, _ in run_retrieval(config)[1]]
+    return [result for result, _ in run_retrieval(config).experiments]
 
 
-def run_retrieval(
-    config: EvalConfig,
-) -> tuple[list[QAExample], list[tuple[ExperimentResult, list[RetrievalRun]]]]:
-    """Run every experiment and keep its runs, which generation needs."""
+def run_retrieval(config: EvalConfig) -> RetrievalOutputs:
+    """Run every experiment and keep its runs, which generation and the report need."""
     documents = load_documents(config.documents)
     examples: list[QAExample] = load_qa_examples(config.dataset, documents)
     embedders: dict[EmbedderSpec, Embedder] = {}
@@ -201,4 +209,4 @@ def run_retrieval(
             retrieval_ms=fmean(latencies) * 1000,
         )
         results.append((result, runs))
-    return examples, results
+    return RetrievalOutputs(documents=documents, examples=examples, experiments=results)

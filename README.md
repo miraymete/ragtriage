@@ -125,6 +125,70 @@ Each question is also classified at a cutoff k, which tells you what to fix:
 
 Retrieve deeper than k. A run that stops at k can't show a ranking failure.
 
+## Uncertainty and paired comparison
+
+Both are optional. Without these flags the output is unchanged.
+
+```bash
+ragtriage run examples/turkish_quickstart/config.yaml --stats \
+  --baseline "fixed 300, naive" --candidate "fixed 300, prefix"
+```
+
+- `--stats` adds a **percentile bootstrap** interval for the mean of recall@k, reciprocal rank (whose mean is MRR) and nDCG@k in every experiment. Questions are resampled with replacement.
+- `--baseline A --candidate B` compares **two experiments you choose**, question by question. The difference is always **B − A**.
+  - The interval comes from a **paired bootstrap**: one resample picks the same questions on both sides.
+  - The p-value comes from a **two-sided paired permutation test** that flips the sign of each question's difference. Patterns exactly as extreme as the observed one count. Zero differences are left out of the flipping because flipping does not change them.
+  - With up to 20 nonzero differences, every sign pattern is enumerated (**exact**, p = extreme / 2^m). Above that, random patterns are drawn (**Monte Carlo**, p = (extreme + 1) / (draws + 1)). The output says which one was used.
+- Settings: `--confidence` (0.95), `--resamples` (10000), `--permutations` (100000 Monte Carlo draws) and `--seed` (0). The seed, the method, the confidence level and the number of resamples are saved in the JSON, so the same command gives the same numbers.
+- In the JSON, each experiment gets `statistics`. The comparison is stored as `comparison` on the candidate's entry.
+
+How the edge cases are handled:
+
+- Questions labeled unanswerable are excluded, and the output says how many were used and how many were excluded.
+- Questions are matched by id. If the two experiments scored different, missing or duplicate question ids, that is an error. The run never quietly falls back to the questions both have in common.
+- There is no result for zero questions. For one question there is a mean but no interval or p-value.
+- If every value or every difference is the same, the interval has zero width and is labeled (`constant`, `constant_difference`, `all_zero`). That describes this sample, not certainty about new questions. All-zero differences give p = 1.
+
+### Reading the demo
+
+From the demo run above (21 scored questions, 2 unanswerable excluded, seed 0):
+
+| Metric | naive | prefix | prefix − naive | 95% CI | Higher / lower / tied | Unadjusted p |
+|---|---|---|---|---|---|---|
+| recall@3 | 0.833 | 1.000 | +0.167 | [0.024, 0.333] | 4 / 0 / 17 | 0.125 (exact, 2/16) |
+| MRR | 0.786 | 0.952 | +0.167 | [0.048, 0.286] | 6 / 0 / 15 | 0.031 (exact, 2/64) |
+| nDCG@3 | 0.786 | 0.965 | +0.179 | [0.066, 0.305] | 7 / 0 / 14 | 0.016 (exact, 2/128) |
+
+- **The two methods can disagree on few questions.** For recall the bootstrap interval excludes zero, but p = 0.125. Only 4 questions differ, so there are only 16 sign patterns. The smallest p-value the test can reach is 2/16, even when all 4 changes go the same way. With so few differences, a percentile bootstrap interval is also likely to be too narrow. Read both numbers, and look at the question counts behind them.
+- **These p-values are unadjusted.** This table already checks three metrics, and picking one pair out of six experiments is itself a choice. The more things you check, the more likely it is that one looks significant by luck. This first version does not correct for that, and it never tests every pair on its own.
+- **The tool does not name a winner**, and it does not label results as equivalent or as a proven improvement. These are demo numbers from a small, self-written test set, not a benchmark.
+
+**What the method assumes and cannot fix.** Intervals and p-values treat the questions as independent draws from the questions the system will really face. Questions written about the same document are not independent. The same author wrote these documents and questions, so the set is not a sample of real use. Resampling does not correct either problem. The result is about these questions, not about retrieval in general.
+
+## HTML report
+
+Add `--html` to write one self-contained page from the same run. Nothing is evaluated again, and the page loads no scripts, fonts or other files.
+
+```bash
+ragtriage run examples/turkish_quickstart/config.yaml --stats   --baseline "fixed 300, naive" --candidate "fixed 300, prefix" --html results/report.html
+```
+
+The page has:
+
+- **Summary tables.**
+  - The retrieval table for every experiment, with the number of questions scored and excluded.
+  - Bootstrap intervals and the paired comparison, when they were computed. The page names the method (exact or Monte Carlo) and labels every p-value unadjusted.
+  - Generation, faithfulness and relevance, when they ran. The page shows not applicable, failed and stopped results apart. It also shows generator and judge usage on separate rows, with cache and fake responses marked.
+- **One collapsible block per question**, sorted by recall@k (lowest first), then reciprocal rank, then question id. Each block holds:
+  - The gold evidence spans.
+  - The top-k chunks, separate from the deeper results that are used only for triage. Each chunk shows its rank, `doc_id` and character range.
+  - The context actually sent to the model.
+  - Any answer and judge output.
+- **Highlighted overlap.** Characters that overlap a gold span are highlighted in the chunk text, and a chunk is marked as *covering* the evidence only when it passes `min_overlap`.
+- **Questions labeled unanswerable** are listed apart and never shown as retrieval failures. In a stopped run, questions without a result say so, and experiments that never started are marked.
+
+All text from documents, questions, answers, model output and errors is HTML-escaped, including inside highlights. **The file stores questions, passages and answers as plain text**, so treat it like the documents themselves. Responses from the scripted test model are marked as fake. The page never names a winner.
+
 ## Turkish text
 
 Python's `str.lower()` is wrong for Turkish, and the error is silent:
@@ -242,7 +306,7 @@ generation:
 
 - **Larger chunks match more easily.** They are more likely to cover the evidence, which can flatter recall. Compare the `Context chars` column alongside it.
 - **The 0.5 overlap threshold is a choice.** Change it with `min_overlap` and check whether your conclusions hold.
-- **No significance testing yet.** Small differences between configurations may be noise.
+- **Uncertainty estimates assume independent, representative questions.** Questions about the same document are not independent, and p-values are not adjusted for multiple comparisons. Generation and judge results have no intervals yet.
 - **Chunk sizes are in characters, not tokens.** The `fixed` chunker can also cut through a word.
 - **CI does not run a real embedding model.** It tests the adapter against a stub to avoid the download. The results above come from a manual run.
 - **The `hashing` embedder has no notion of meaning.** It matches similar spelling and cannot connect synonyms, so it is only a baseline.
@@ -258,11 +322,13 @@ src/ragtriage/
 ├── models.py             # documents, evidence spans, chunks, runs
 ├── matching.py           # which evidence does a chunk cover?
 ├── metrics/retrieval.py  # pure metric functions and failure types
+├── metrics/statistics.py # bootstrap intervals and paired permutation tests
 ├── evaluate.py           # score runs against a test set
 ├── datasets.py           # load documents and JSONL test sets
 ├── config.py             # validated YAML experiment file
 ├── runner.py             # build pipelines and run every experiment
 ├── cli.py                # ragtriage run config.yaml
+├── html_report.py        # single-file HTML report of one run
 ├── outcomes.py           # Scored / NotApplicable / Failed
 ├── generation/           # LLM interface, FakeLLM, generator, Anthropic adapter, cache, judges
 └── pipelines/            # chunkers, tokenizers, BM25, embedders, vector search
@@ -292,7 +358,8 @@ Metric tests use values worked out by hand, plus property-based tests with [Hypo
 - [x] Response cache and a faithfulness judge with verified support quotes
 - [x] Answer relevance from answer-only questions and embedding similarity
 - [ ] Concurrent calls and rate limiting
-- [ ] HTML report with the worst examples and significance testing
+- [x] Bootstrap intervals and paired permutation tests for retrieval metrics
+- [x] Single-file HTML report with per-question details
 - [ ] Synthetic test sets, including unanswerable questions
 - [ ] Judge validation against human labels, and a real Turkish case study
 
