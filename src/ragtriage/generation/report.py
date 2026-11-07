@@ -5,12 +5,12 @@ from __future__ import annotations
 from collections import Counter
 from collections.abc import Sequence
 from statistics import fmean
-from typing import Protocol
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, computed_field
 
 from ragtriage.generation.generator import GenerationRecord, GenerationStatus
-from ragtriage.generation.llm import Origin, Source, TokenUsage
+from ragtriage.generation.llm import LLMErrorKind, Origin, Source, TokenUsage
 from ragtriage.outcomes import Failed, NotApplicable, Scored
 
 
@@ -73,6 +73,31 @@ class RelevanceSummary(BaseModel):
     judge_usage: UsageSummary
 
 
+class StopAttempt(BaseModel):
+    """The call whose fatal error stopped the run.
+
+    It has no GenerationRecord or JudgeCall, because its result never completed. It is kept here
+    so the attempt is not lost from the call count.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    role: Literal["generator", "faithfulness_judge", "relevance_judge"]
+    example_id: str
+    provider: str
+    model: str
+    error_kind: LLMErrorKind
+    status_code: int | None
+    message: str
+    # True only when the provider answered with an HTTP status, so a request reached the API.
+    # False for a scripted fake client and for errors raised before anything was sent, such as
+    # missing credentials.
+    sent_to_api: bool
+    # The provider reports no usage for a failed request: unknown, never zero.
+    usage: TokenUsage | None = None
+    cost_usd: float | None = None
+
+
 class GenerationReport(BaseModel):
     """Counts and rates. Failed generations are counted, never folded into a rate.
 
@@ -89,6 +114,9 @@ class GenerationReport(BaseModel):
     failures: dict[GenerationStatus, int]
     # Set when an error that would fail every request stopped the run early.
     stopped: str | None = None
+    # Set when a fatal provider error stopped the run. Not set for cache errors or for the
+    # repeated-error stop, whose calls all have records.
+    stop_attempt: StopAttempt | None = None
     # Abstained / evaluated, for questions labeled unanswerable. Higher is better.
     abstained_when_unanswerable: Rate
     # Abstained / evaluated, for questions labeled answerable: false abstentions at corpus level.
@@ -194,6 +222,7 @@ def summarize(
     records: Sequence[GenerationRecord],
     n_examples: int | None = None,
     stopped: str | None = None,
+    stop_attempt: StopAttempt | None = None,
 ) -> GenerationReport:
     evaluated = [r for r in records if r.status is GenerationStatus.OK]
     answerable = [r for r in evaluated if r.answerable]
@@ -213,6 +242,7 @@ def summarize(
         n_evaluated=len(evaluated),
         failures=dict(Counter(r.status for r in records if r.status is not GenerationStatus.OK)),
         stopped=stopped,
+        stop_attempt=stop_attempt,
         abstained_when_unanswerable=_abstention_rate([r for r in evaluated if not r.answerable]),
         abstained_when_answerable=_abstention_rate(answerable),
         abstained_when_answerable_evidence_present=_abstention_rate(

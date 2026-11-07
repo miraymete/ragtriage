@@ -141,6 +141,11 @@ class RelevanceJudge:
     async def aclose(self) -> None:
         await self._client.aclose()
 
+    @property
+    def client(self) -> LLMClient:
+        """The client this judge calls, so a stopped run can say which provider failed."""
+        return self._client
+
     async def evaluate(self, question: str, answer: str, abstained: bool) -> RelevanceResult:
         """The judge sees only `answer`; `question` is used only for the embedding comparison."""
         settings = self._embedder_settings

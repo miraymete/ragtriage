@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
+from typing import Literal
 
 from ragtriage.generation.cache import CacheError
 from ragtriage.generation.generator import GenerationRecord, GenerationStatus, Generator
 from ragtriage.generation.judge import FaithfulnessJudge, FaithfulnessResult
-from ragtriage.generation.llm import LLMError
+from ragtriage.generation.llm import LLMClient, LLMError
 from ragtriage.generation.relevance import RelevanceJudge, RelevanceResult
-from ragtriage.generation.report import GenerationReport, summarize
+from ragtriage.generation.report import GenerationReport, StopAttempt, summarize
 from ragtriage.models import QAExample, RetrievalRun
 from ragtriage.outcomes import Failed, NotApplicable
 
@@ -46,15 +47,20 @@ async def generate_reports(
     for runs in runs_per_experiment:
         by_id = {run.example_id: run for run in runs}
         records: list[GenerationRecord] = []
+        # Which call is in flight, so a fatal error can be attributed to it.
+        current: tuple[Role, LLMClient, str] | None = None
         try:
             for example in examples:
                 run = by_id[example.id]
+                current = ("generator", generator.client, example.id)
                 record = await generator.generate(example, run)
                 try:
                     if judge is not None:
+                        current = ("faithfulness_judge", judge.client, example.id)
                         result = await _judge(judge, generator, example, run, record)
                         record = record.model_copy(update={"faithfulness": result})
                     if relevance is not None:
+                        current = ("relevance_judge", relevance.client, example.id)
                         scored = await _relevance(relevance, example, record)
                         record = record.model_copy(update={"relevance": scored})
                 except (LLMError, CacheError) as error:
@@ -68,7 +74,12 @@ async def generate_reports(
         except LLMError as error:
             if not error.fatal:
                 raise  # the generator records these itself; reaching here would be a bug
-            reports.append(summarize(records, n_examples=len(examples), stopped=str(error)))
+            attempt = _stop_attempt(current, error) if current is not None else None
+            reports.append(
+                summarize(
+                    records, n_examples=len(examples), stopped=str(error), stop_attempt=attempt
+                )
+            )
             return reports
         except CacheError as error:
             # A cache that cannot be trusted stops the run instead of falling back to paid calls.
@@ -77,6 +88,24 @@ async def generate_reports(
             return reports
         reports.append(summarize(records))
     return reports
+
+
+Role = Literal["generator", "faithfulness_judge", "relevance_judge"]
+
+
+def _stop_attempt(current: tuple[Role, LLMClient, str], error: LLMError) -> StopAttempt:
+    role, client, example_id = current
+    return StopAttempt(
+        role=role,
+        example_id=example_id,
+        provider=client.provider,
+        model=client.model,
+        error_kind=error.kind,
+        status_code=error.status_code,
+        message=str(error),
+        # An HTTP status means the request reached the provider. The scripted fake never does.
+        sent_to_api=client.provider != "fake" and error.status_code is not None,
+    )
 
 
 async def _judge(
