@@ -40,4 +40,5 @@ Setup: `python -m venv .venv`, then `.venv\Scripts\python -m pip install -e ".[d
 - Never read, print or commit API keys. Code gets credentials from the environment through the SDK.
 - Ask before any paid API call or large download, with the expected cost or size.
 - Commit or push only when the user asks. Work on `main` unless told otherwise.
+- Do not add `Co-Authored-By: Claude` or any other AI attribution line to commit messages or pull request descriptions. Keep the user's git author and committer settings as they are.
 - Numbers in the README must come from a real run. Small, self-written test sets are demos, not benchmarks; say so.
