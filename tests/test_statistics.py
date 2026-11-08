@@ -349,3 +349,11 @@ def test_bad_statistics_options_fail_before_running(config_path, extra, message)
 
 def _load(path):
     return json.loads(path.read_text("utf-8"))
+
+
+def test_a_small_monte_carlo_p_value_is_never_shown_as_zero():
+    from ragtriage.metrics.statistics import format_p
+
+    assert format_p(1 / 100_001) == "1.0e-05"
+    assert format_p(0.03125) == "0.0312"
+    assert format_p(1.0) == "1.0000"

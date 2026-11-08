@@ -167,7 +167,7 @@ def test_retrieval_only_report(tmp_path):
     page = render_report(report_data(make_config(tmp_path)))
     check_page(page)
     assert "<h2>Retrieval</h2>" in page
-    assert "<h2>Uncertainty</h2>" not in page
+    assert "<h2>Question-level uncertainty</h2>" not in page
     assert "<h2>Generation</h2>" not in page
     assert "<h4>Generation" not in page
     assert "small &lt;i&gt;" in page and "small <i>" not in page
@@ -213,7 +213,7 @@ def test_statistics_section_shows_methods_and_unadjusted_p(tmp_path):
     assert result.exit_code == 0, result.output
     page = html_path.read_text("utf-8")
     check_page(page)
-    assert "<h2>Uncertainty</h2>" in page
+    assert "<h2>Question-level uncertainty</h2>" in page
     assert "Percentile bootstrap over questions: 200 resamples, seed 0" in page
     assert "Paired comparison: large − small &lt;i&gt;" in page
     assert "<strong>unadjusted</strong>" in page

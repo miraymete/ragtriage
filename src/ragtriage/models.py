@@ -60,6 +60,9 @@ class QAExample(_Frozen):
     question: str
     evidence: tuple[Evidence, ...] = ()
     reference_answer: str | None = None
+    # Optional cluster label, such as the source article. Questions in one group are not
+    # independent; group statistics resample whole groups. No metric uses it.
+    group: str | None = None
 
     @property
     def answerable(self) -> bool:

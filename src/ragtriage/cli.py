@@ -25,11 +25,16 @@ from ragtriage.metrics.statistics import (
     BootstrapSettings,
     Comparison,
     ExperimentStatistics,
+    GroupComparison,
+    GroupStatistics,
     MeanInterval,
     PairedDifference,
     PermutationSettings,
     compare_experiments,
+    compare_groups,
     experiment_statistics,
+    format_p,
+    group_statistics,
     statistic_metrics,
 )
 from ragtriage.models import QAExample, RetrievalRun
@@ -106,8 +111,8 @@ def _p_value(item: PairedDifference) -> str:
     if test is None:
         return "n/a (n=1)"
     if test.method == "exact":
-        return f"{test.p_value:.4f} (exact, {test.n_extreme}/{test.n_patterns})"
-    return f"{test.p_value:.4f} (Monte Carlo, {test.n_patterns} draws)"
+        return f"{format_p(test.p_value)} (exact, {test.n_extreme}/{test.n_patterns})"
+    return f"{format_p(test.p_value)} (Monte Carlo, {test.n_patterns} draws)"
 
 
 _DIFFERENCE_NOTES = {
@@ -134,6 +139,53 @@ def comparison_report(comparison: Comparison) -> str:
         if item.note in _DIFFERENCE_NOTES:
             rows.append(f"{item.metric}: {_DIFFERENCE_NOTES[item.note]}.")
     return "\n".join(rows)
+
+
+def group_statistics_table(stats: Sequence[GroupStatistics]) -> str:
+    metrics = [m.metric for m in stats[0].metrics]
+    rows = [
+        "| Experiment | Groups | Questions | "
+        + " | ".join(f"{m} mean [CI]" for m in metrics)
+        + " |",
+        "|---|---|---|" + "---|" * len(metrics),
+    ]
+    for item in stats:
+        cells = " | ".join(
+            f"{m.mean:.3f} "
+            + (
+                "no interval (1 group)"
+                if m.ci_low is None
+                else f"[{m.ci_low:.3f}, {m.ci_high:.3f}]"
+            )
+            for m in item.metrics
+        )
+        rows.append(f"| {item.experiment} | {item.n_groups} | {item.n_questions} | {cells} |")
+    return "\n".join(rows)
+
+
+def group_comparison_table(comparison: GroupComparison) -> str:
+    rows = [
+        f"| Metric | Baseline mean | Candidate mean | Difference | "
+        f"{comparison.bootstrap.confidence:.0%} CI (groups) |",
+        "|---|---|---|---|---|",
+    ]
+    for d in comparison.metrics:
+        interval = (
+            "no interval (1 group)" if d.ci_low is None else f"[{d.ci_low:.3f}, {d.ci_high:.3f}]"
+        )
+        rows.append(
+            f"| {d.metric} | {d.mean_baseline:.3f} | {d.mean_candidate:.3f} "
+            f"| {d.mean_difference:+.3f} | {interval} |"
+        )
+    return "\n".join(rows)
+
+
+GROUP_NOTE = (
+    "Group bootstrap: whole groups are resampled with replacement, with all their questions, and "
+    "the mean stays question-weighted. It allows for questions in a group not being "
+    "independent. It does not make a few groups many, or make the groups representative, and it "
+    "gives no p-value. Any question-level p-value above is a different method."
+)
 
 
 STATISTICS_NOTE = (
@@ -326,6 +378,12 @@ def run(
     html: Annotated[
         Path | None, typer.Option(help="Also write a single-file HTML report of this run.")
     ] = None,
+    group_stats: Annotated[
+        bool,
+        typer.Option(
+            help="Add group-level (cluster) bootstrap intervals; every question needs a group."
+        ),
+    ] = False,
 ) -> None:
     """Run every experiment in a config and print a comparison table."""
     if hasattr(sys.stdout, "reconfigure"):
@@ -392,6 +450,42 @@ def run(
             )
         typer.echo("\n" + STATISTICS_NOTE)
 
+    group_stats_results: list[GroupStatistics] | None = None
+    group_comparison: GroupComparison | None = None
+    if group_stats:
+        groups = {e.id: e.group for e in examples}
+        try:
+            group_stats_results = [
+                group_statistics(r.name, r.report, groups, metrics, bootstrap) for r in results
+            ]
+            if baseline is not None and candidate is not None:
+                by_name = {r.name: r.report for r in results}
+                group_comparison = compare_groups(
+                    (baseline, by_name[baseline]),
+                    (candidate, by_name[candidate]),
+                    groups,
+                    metrics,
+                    bootstrap,
+                )
+        except ValueError as error:
+            typer.echo(f"error: {error}", err=True)
+            raise typer.Exit(code=2) from error
+        first = group_stats_results[0]
+        typer.echo(
+            f"\nGroup-level statistics ({first.n_groups} groups, {first.n_questions} questions, "
+            f"{first.n_unanswerable_excluded} unanswerable excluded; group percentile bootstrap, "
+            f"question-weighted, {bootstrap.confidence:.0%} CI, {resamples} resamples, "
+            f"seed {seed})\n"
+        )
+        typer.echo(group_statistics_table(group_stats_results))
+        if group_comparison is not None:
+            typer.echo(
+                f"\nPaired group comparison: candidate {candidate!r} - baseline {baseline!r} "
+                "(same group draws for both; no p-value)\n"
+            )
+            typer.echo(group_comparison_table(group_comparison))
+        typer.echo("\n" + GROUP_NOTE)
+
     reports: list[GenerationReport] | None = None
     if config.generation is not None:
         try:
@@ -431,6 +525,13 @@ def run(
             for item in payload:
                 if item["name"] == comparison.candidate:
                     item["comparison"] = comparison.model_dump(mode="json")
+        if group_stats_results is not None:
+            for item, group_stat in zip(payload, group_stats_results, strict=True):
+                item["group_statistics"] = group_stat.model_dump(mode="json")
+        if group_comparison is not None:
+            for item in payload:
+                if item["name"] == group_comparison.candidate:
+                    item["group_comparison"] = group_comparison.model_dump(mode="json")
         if reports is not None:
             for item, report in zip(payload, reports, strict=False):
                 item["generation"] = report.model_dump(mode="json")
@@ -450,6 +551,8 @@ def run(
                 statistics=experiment_stats,
                 comparison=comparison,
                 generation=reports,
+                group_statistics=group_stats_results,
+                group_comparison=group_comparison,
             )
         )
         html.write_text(page, encoding="utf-8")

@@ -134,13 +134,15 @@ ragtriage run examples/turkish_quickstart/config.yaml --stats \
   --baseline "fixed 300, naive" --candidate "fixed 300, prefix"
 ```
 
-- `--stats` adds a **percentile bootstrap** interval for the mean of recall@k, reciprocal rank (whose mean is MRR) and nDCG@k in every experiment. Questions are resampled with replacement.
+- `--stats` adds a question-level **percentile bootstrap** interval for the mean of recall@k, reciprocal rank (whose mean is MRR) and nDCG@k in every experiment. Questions are resampled with replacement.
 - `--baseline A --candidate B` compares **two experiments you choose**, question by question. The difference is always **B − A**.
   - The interval comes from a **paired bootstrap**: one resample picks the same questions on both sides.
   - The p-value comes from a **two-sided paired permutation test** that flips the sign of each question's difference. Patterns exactly as extreme as the observed one count. Zero differences are left out of the flipping because flipping does not change them.
   - With up to 20 nonzero differences, every sign pattern is enumerated (**exact**, p = extreme / 2^m). Above that, random patterns are drawn (**Monte Carlo**, p = (extreme + 1) / (draws + 1)). The output says which one was used.
 - Settings: `--confidence` (0.95), `--resamples` (10000), `--permutations` (100000 Monte Carlo draws) and `--seed` (0). The seed, the method, the confidence level and the number of resamples are saved in the JSON, so the same command gives the same numbers.
 - In the JSON, each experiment gets `statistics`. The comparison is stored as `comparison` on the candidate's entry.
+- `--group-stats` adds a **group-level (cluster) bootstrap** when every question has a `group` field, such as its source article. Whole groups are resampled with replacement, together with all their questions; a group drawn twice counts twice. The mean stays question-weighted, like the tables. With `--baseline` and `--candidate` it also bootstraps B − A over the same group draws. It gives intervals only, no p-value, and it is reported apart from the question-level method. The JSON fields are `group_statistics` and `group_comparison`. It allows for questions within a group being related. It does not help when there are few groups, or when the groups do not represent real use.
+- The two methods are printed in separate tables, and the HTML report gives them separate sections. A question-level p-value is not part of a group-level interval, and the two can disagree.
 
 How the edge cases are handled:
 
@@ -306,7 +308,7 @@ generation:
 
 - **Larger chunks match more easily.** They are more likely to cover the evidence, which can flatter recall. Compare the `Context chars` column alongside it.
 - **The 0.5 overlap threshold is a choice.** Change it with `min_overlap` and check whether your conclusions hold.
-- **Uncertainty estimates assume independent, representative questions.** Questions about the same document are not independent, and p-values are not adjusted for multiple comparisons. Generation and judge results have no intervals yet.
+- **Uncertainty estimates assume representative questions.** The question-level methods also assume independent questions. `--group-stats` resamples whole groups instead, but it needs enough groups, and it gives no p-value. p-values are not adjusted for multiple comparisons. Generation and judge results have no intervals yet.
 - **Chunk sizes are in characters, not tokens.** The `fixed` chunker can also cut through a word.
 - **CI does not run a real embedding model.** It tests the adapter against a stub to avoid the download. The results above come from a manual run.
 - **The `hashing` embedder has no notion of meaning.** It matches similar spelling and cannot connect synonyms, so it is only a baseline.

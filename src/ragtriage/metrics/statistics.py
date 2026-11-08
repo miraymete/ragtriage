@@ -10,7 +10,7 @@ chance that one of them looks significant by luck.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from math import isfinite
 from typing import Literal
 
@@ -331,3 +331,273 @@ def compare_experiments(
             for m in metrics
         ),
     )
+
+
+# --- group-level (cluster) bootstrap ----------------------------------------------------------
+#
+# Questions from the same article share paragraphs, wording and difficulty, so they are not
+# independent draws. This bootstrap resamples whole groups with replacement and keeps every
+# question of each drawn group, as many times as the group is drawn. The estimate is the
+# question-weighted mean, the same quantity as the metric tables: sum of values / number of
+# questions over the drawn groups. It is not the mean of per-group means.
+#
+# Resampling groups does not fix a small number of groups or groups that do not represent real
+# use. There is no group-level p-value here.
+
+
+class GroupMeanInterval(_Model):
+    metric: str
+    n_groups: int
+    n_questions: int
+    mean: float
+    ci_low: float | None
+    ci_high: float | None
+    note: Literal["single_group", "constant"] | None = None
+
+
+class GroupStatistics(_Model):
+    experiment: str
+    method: Literal["group percentile bootstrap"] = "group percentile bootstrap"
+    weighting: Literal["question"] = "question"
+    n_groups: int
+    n_questions: int
+    n_unanswerable_excluded: int
+    bootstrap: BootstrapSettings
+    metrics: tuple[GroupMeanInterval, ...]
+
+
+class GroupDifference(_Model):
+    metric: str
+    n_groups: int
+    n_questions: int
+    mean_baseline: float
+    mean_candidate: float
+    # Always candidate - baseline.
+    mean_difference: float
+    ci_low: float | None
+    ci_high: float | None
+    note: Literal["single_group", "all_zero", "constant_difference"] | None = None
+
+
+class GroupComparison(_Model):
+    baseline: str
+    candidate: str
+    direction: Literal["candidate - baseline"] = "candidate - baseline"
+    method: Literal["paired group percentile bootstrap"] = "paired group percentile bootstrap"
+    weighting: Literal["question"] = "question"
+    n_groups: int
+    n_questions: int
+    n_unanswerable_excluded: int
+    bootstrap: BootstrapSettings
+    metrics: tuple[GroupDifference, ...]
+
+
+def _group_arrays(
+    values: Sequence[tuple[str, float]], groups: Mapping[str, str], what: str
+) -> tuple[list[str], Floats, Floats]:
+    """Per group, in name order: names, sum of values, and number of questions."""
+    by_id = _by_id(values, what)
+    if not by_id:
+        raise ValueError(f"{what}: no questions")
+    missing = sorted(i for i in by_id if i not in groups)
+    if missing:
+        raise ValueError(f"{what}: no group for {missing[:5]}")
+    sums: dict[str, float] = {}
+    counts: dict[str, int] = {}
+    for qid, value in by_id.items():
+        group = groups[qid]
+        sums[group] = sums.get(group, 0.0) + value
+        counts[group] = counts.get(group, 0) + 1
+    names = sorted(sums)
+    return (
+        names,
+        np.array([sums[g] for g in names], dtype=np.float64),
+        np.array([counts[g] for g in names], dtype=np.float64),
+    )
+
+
+def resample_groups(sums: Floats, counts: Floats, settings: BootstrapSettings) -> Floats:
+    """Question-weighted means of `n_resamples` group resamples, drawn in chunks.
+
+    Each resample draws as many group indices as there are groups, with replacement. A group
+    drawn twice counts twice, with all its questions.
+    """
+    rng = np.random.default_rng(settings.seed)
+    g = sums.size
+    rows = max(1, _CHUNK_CELLS // g)
+    means = np.empty(settings.n_resamples)
+    for start in range(0, settings.n_resamples, rows):
+        stop = min(start + rows, settings.n_resamples)
+        drawn = rng.integers(0, g, size=(stop - start, g))
+        means[start:stop] = sums[drawn].sum(axis=1) / counts[drawn].sum(axis=1)
+    return means
+
+
+def group_bootstrap_mean(
+    values: Sequence[tuple[str, float]],
+    groups: Mapping[str, str],
+    metric: str,
+    settings: BootstrapSettings,
+) -> GroupMeanInterval:
+    names, sums, counts = _group_arrays(values, groups, metric)
+    mean = float(sums.sum() / counts.sum())
+    n_groups, n_questions = len(names), int(counts.sum())
+    if n_groups == 1:
+        return GroupMeanInterval(
+            metric=metric,
+            n_groups=1,
+            n_questions=n_questions,
+            mean=mean,
+            ci_low=None,
+            ci_high=None,
+            note="single_group",
+        )
+    flat = np.array([v for _, v in values], dtype=np.float64)
+    if np.all(flat == flat[0]):
+        return GroupMeanInterval(
+            metric=metric,
+            n_groups=n_groups,
+            n_questions=n_questions,
+            mean=mean,
+            ci_low=mean,
+            ci_high=mean,
+            note="constant",
+        )
+    low, high = _percentile_interval(resample_groups(sums, counts, settings), settings.confidence)
+    return GroupMeanInterval(
+        metric=metric,
+        n_groups=n_groups,
+        n_questions=n_questions,
+        mean=mean,
+        ci_low=low,
+        ci_high=high,
+    )
+
+
+def group_paired_difference(
+    baseline: Sequence[tuple[str, float]],
+    candidate: Sequence[tuple[str, float]],
+    groups: Mapping[str, str],
+    metric: str,
+    settings: BootstrapSettings,
+) -> GroupDifference:
+    """candidate - baseline, with both experiments resampled by the same group draws."""
+    a = _by_id(baseline, "baseline")
+    b = _by_id(candidate, "candidate")
+    if a.keys() != b.keys():
+        raise ValueError(
+            f"{metric}: the experiments scored different questions: "
+            f"only in baseline {sorted(a.keys() - b.keys())}, "
+            f"only in candidate {sorted(b.keys() - a.keys())}"
+        )
+    diffs = [(qid, b[qid] - a[qid]) for qid in sorted(a)]
+    names, sums, counts = _group_arrays(diffs, groups, metric)
+    total = counts.sum()
+    mean_a = sum(a.values()) / total
+    mean_b = sum(b.values()) / total
+    mean_diff = float(sums.sum() / total)
+    n_groups, n_questions = len(names), int(total)
+
+    def result(low: float | None, high: float | None, note: str | None) -> GroupDifference:
+        return GroupDifference.model_validate(
+            {
+                "metric": metric,
+                "n_groups": n_groups,
+                "n_questions": n_questions,
+                "mean_baseline": mean_a,
+                "mean_candidate": mean_b,
+                "mean_difference": mean_diff,
+                "ci_low": low,
+                "ci_high": high,
+                "note": note,
+            }
+        )
+
+    if n_groups == 1:
+        return result(None, None, "single_group")
+    flat = np.array([d for _, d in diffs], dtype=np.float64)
+    if np.all(flat == flat[0]):
+        value = float(flat[0])
+        return result(value, value, "all_zero" if value == 0 else "constant_difference")
+    # The per-question differences are resampled by group, so one draw of groups serves both
+    # experiments.
+    low, high = _percentile_interval(resample_groups(sums, counts, settings), settings.confidence)
+    return result(low, high, None)
+
+
+def _groups_for(report: RetrievalReport, groups: Mapping[str, str | None]) -> dict[str, str]:
+    """The group of every scored question. A missing group is an error, never dropped."""
+    result: dict[str, str] = {}
+    missing = []
+    for score in report.per_example:
+        group = groups.get(score.example_id)
+        if group is None:
+            missing.append(score.example_id)
+        else:
+            result[score.example_id] = group
+    if missing:
+        raise ValueError(
+            "group statistics need a group for every scored question; "
+            f"{len(missing)} have none, e.g. {missing[:3]}"
+        )
+    return result
+
+
+def group_statistics(
+    name: str,
+    report: RetrievalReport,
+    groups: Mapping[str, str | None],
+    metrics: Sequence[str],
+    settings: BootstrapSettings,
+) -> GroupStatistics:
+    by_id = _groups_for(report, groups)
+    return GroupStatistics(
+        experiment=name,
+        n_groups=len(set(by_id.values())),
+        n_questions=len(by_id),
+        n_unanswerable_excluded=report.n_unanswerable_skipped,
+        bootstrap=settings,
+        metrics=tuple(
+            group_bootstrap_mean(metric_values(report, m), by_id, m, settings) for m in metrics
+        ),
+    )
+
+
+def compare_groups(
+    baseline: tuple[str, RetrievalReport],
+    candidate: tuple[str, RetrievalReport],
+    groups: Mapping[str, str | None],
+    metrics: Sequence[str],
+    settings: BootstrapSettings,
+) -> GroupComparison:
+    """Paired group bootstrap of candidate - baseline.
+
+    Both experiments are grouped through the one `groups` mapping, and they must score exactly the
+    same question ids. So a question always falls in the same group on both sides; there is no
+    separate grouping per experiment that could disagree.
+    """
+    (name_a, report_a), (name_b, report_b) = baseline, candidate
+    if name_a == name_b:
+        raise ValueError("baseline and candidate must be different experiments")
+    if report_a.n_unanswerable_skipped != report_b.n_unanswerable_skipped:
+        raise ValueError("the experiments excluded different numbers of unanswerable questions")
+    by_id = _groups_for(report_a, groups)
+    return GroupComparison(
+        baseline=name_a,
+        candidate=name_b,
+        n_groups=len(set(by_id.values())),
+        n_questions=len(by_id),
+        n_unanswerable_excluded=report_a.n_unanswerable_skipped,
+        bootstrap=settings,
+        metrics=tuple(
+            group_paired_difference(
+                metric_values(report_a, m), metric_values(report_b, m), by_id, m, settings
+            )
+            for m in metrics
+        ),
+    )
+
+
+def format_p(p: float) -> str:
+    """Four decimals, but never round a nonzero p-value down to "0.0000"."""
+    return f"{p:.4f}" if p >= 0.0001 or p == 0 else f"{p:.1e}"

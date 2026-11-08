@@ -21,8 +21,11 @@ from ragtriage.metrics.retrieval import Failure
 from ragtriage.metrics.statistics import (
     Comparison,
     ExperimentStatistics,
+    GroupComparison,
+    GroupStatistics,
     MeanInterval,
     PairedDifference,
+    format_p,
 )
 from ragtriage.models import Document, Evidence, QAExample, RetrievalRun, RetrievedChunk
 from ragtriage.outcomes import Failed, NotApplicable, Outcome, Scored
@@ -42,6 +45,8 @@ class ReportData:
     comparison: Comparison | None = None
     # None: generation was not configured. Shorter than `experiments`: the run stopped.
     generation: Sequence[GenerationReport] | None = None
+    group_statistics: Sequence[GroupStatistics] | None = None
+    group_comparison: GroupComparison | None = None
 
 
 def _e(value: object) -> str:
@@ -184,10 +189,10 @@ def _statistics(data: ReportData) -> str:
             if test is None:
                 p = "n/a (n=1)"
             elif test.method == "exact":
-                p = f"{test.p_value:.4f} (exact, {test.n_extreme}/{test.n_patterns} patterns)"
+                p = f"{format_p(test.p_value)} (exact, {test.n_extreme}/{test.n_patterns} patterns)"
             else:
                 p = (
-                    f"{test.p_value:.4f} (Monte Carlo, {test.n_patterns} draws, "
+                    f"{format_p(test.p_value)} (Monte Carlo, {test.n_patterns} draws, "
                     f"seed {test.seed}, p = (extreme + 1) / (draws + 1))"
                 )
             note = f'<div class="muted">{_e(_NOTES[d.note])}</div>' if d.note else ""
@@ -226,7 +231,7 @@ def _statistics(data: ReportData) -> str:
     if not parts:
         return ""
     return (
-        "<section><h2>Uncertainty</h2>"
+        "<section><h2>Question-level uncertainty</h2>"
         + "".join(parts)
         + '<div class="note"><p>The interval and the p-value come from different methods. The '
         "bootstrap resamples questions; the permutation test flips the sign of each question's "
@@ -242,6 +247,76 @@ def _statistics(data: ReportData) -> str:
         "and a small self-written test set is not a sample of real use. Resampling fixes "
         "neither.</p></div></section>"
     )
+
+
+def _group_interval(low: float | None, high: float | None) -> str:
+    return "no interval (1 group)" if low is None or high is None else f"[{low:.3f}, {high:.3f}]"
+
+
+def _group_section(data: ReportData) -> str:
+    stats, comparison = data.group_statistics, data.group_comparison
+    if not stats:
+        return ""
+    first = stats[0]
+    b = first.bootstrap
+    metrics = [m.metric for m in first.metrics]
+    parts = [
+        "<section><h2>Group-level uncertainty</h2>",
+        f"<p>Group percentile bootstrap: whole groups are resampled with replacement, with all "
+        f"their questions. The mean stays question-weighted, as in the tables above. "
+        f"{first.n_groups} groups, {first.n_questions} questions, "
+        f"{first.n_unanswerable_excluded} unanswerable excluded; {b.confidence:.0%}, "
+        f"{b.n_resamples} resamples, seed {b.seed}.</p>",
+        _table(
+            ["Experiment", "Groups", "Questions", *(_e(m) for m in metrics)],
+            [
+                [
+                    _e(s.experiment),
+                    str(s.n_groups),
+                    str(s.n_questions),
+                    *(
+                        f"{m.mean:.3f} {_e(_group_interval(m.ci_low, m.ci_high))}"
+                        for m in s.metrics
+                    ),
+                ]
+                for s in stats
+            ],
+        ),
+    ]
+    if comparison is not None:
+        parts.append(
+            f"<h3>Paired group comparison: {_e(comparison.candidate)} − "
+            f"{_e(comparison.baseline)}</h3><p>Difference is candidate − baseline. Both "
+            "experiments use the same group draws. There is no p-value for this comparison.</p>"
+        )
+        parts.append(
+            _table(
+                [
+                    "Metric",
+                    "Baseline mean",
+                    "Candidate mean",
+                    "Difference",
+                    f"{b.confidence:.0%} CI",
+                ],
+                [
+                    [
+                        _e(d.metric),
+                        f"{d.mean_baseline:.3f}",
+                        f"{d.mean_candidate:.3f}",
+                        f"{d.mean_difference:+.3f}",
+                        _e(_group_interval(d.ci_low, d.ci_high)),
+                    ]
+                    for d in comparison.metrics
+                ],
+            )
+        )
+    parts.append(
+        '<div class="note"><p>This allows for questions in one group not being independent. It '
+        "does not make a few groups many, or make them represent real use. Any question-level "
+        "p-value elsewhere on this page comes from a different method and is not part of this "
+        "interval.</p></div></section>"
+    )
+    return "".join(parts)
 
 
 def _rate(rate: Rate) -> str:
@@ -813,6 +888,7 @@ def render_report(data: ReportData) -> str:
         _banner(data),
         _retrieval_summary(data),
         _statistics(data),
+        _group_section(data),
         _generation_summary(data),
         '<section><h2>Questions</h2><p class="muted">One block per experiment. Open a '
         "question to see its gold evidence, the retrieved chunks and any generation result.</p>",
