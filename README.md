@@ -88,6 +88,47 @@ This run compares keyword search with a real embedding model, [`paraphrase-multi
 
 The reworded set has only 10 questions, and the same author wrote it, so it shows the direction of the effect rather than its size. With almost every chunk retrieved at depth 20 on a corpus this small, the ranking and retrieval columns mean little for the vector rows. Reproduce with `config_embeddings.yaml` and `config_paraphrase.yaml`. The first run downloads about 460 MB.
 
+## Case study: XQuAD-tr
+
+Does Turkish-aware tokenization help BM25 on public data? This case study uses the Turkish file of [XQuAD](https://github.com/google-deepmind/xquad) (CC BY-SA 4.0, Artetxe et al., 2019). The data is downloaded and checked by `examples/xquad_tr/prepare.py` and is not stored in this repository. [`SOURCE.md`](examples/xquad_tr/SOURCE.md) covers the source, the attribution and the conversion. [`PLAN.md`](examples/xquad_tr/PLAN.md) has every decision, each written down before the run it governs.
+
+**Setup.**
+- 48 articles, 240 paragraphs and 1,190 questions. All answer offsets matched their text.
+- The articles are split 24/24 into dev and test, and each side searches its own 120 paragraphs.
+- The tokenizer and the chunker were chosen on dev only, first on a pilot and then on all 615 dev questions, with a rule fixed in advance.
+- The chosen setting and a fixed baseline were then locked by hash and run once on the 575 test questions.
+- BM25 only, k = 3. The intervals resample whole articles (`--group-stats`), because questions about the same article are not independent.
+
+**Dev** (used to choose, so these numbers are optimistic):
+
+| Setting | Recall@3 | MRR | Context chars@3 |
+|---|---|---|---|
+| Whole paragraphs, `naive` (baseline) | 0.924 | 0.867 | 2493 |
+| Whole paragraphs, `turkish_prefix` (chosen) | 0.961 | 0.935 | 2547 |
+| `fixed` 500, `turkish_prefix` | 0.930 | 0.861 | 1278 |
+| `sentence` 300, `turkish_prefix` | 0.881 | 0.814 | 664 |
+
+**Test** (run once, after the lock):
+
+| Setting | Recall@3 | MRR | nDCG@3 | Context chars@3 | Retrieval / ranking failures |
+|---|---|---|---|---|---|
+| Whole paragraphs, `naive` | 0.934 | 0.904 | 0.906 | 2217 | 15 / 23 |
+| Whole paragraphs, `turkish_prefix` | 0.979 | 0.957 | 0.961 | 2285 | 0 / 12 |
+| Difference [article-level 95% CI] | +0.045 [0.030, 0.062] | +0.054 [0.038, 0.069] | +0.054 [0.039, 0.070] | | |
+
+Both test settings use the same whole-paragraph chunks, so they send almost the same amount of text: about 3% more with the prefix (2285 / 2217). Only the tokenizer differs. These are article-level intervals; the run's question-level p-values are a different method and are not part of them.
+
+On this held-out split, cutting words to a prefix helped again. It removed every case where the gold paragraph was never retrieved: some `naive` queries match no paragraph at all because Turkish suffixes change the word form. What is left are ranking errors, often between paragraphs of the same article. Four of these failures were looked at after the run by recomputing their retrieval with the locked settings. No setting or aggregate metric was changed, and the test split was not run again.
+
+**What this does not show.**
+- The text is a professional translation of English Wikipedia, not native Turkish.
+- The evidence is a short answer span, which a whole paragraph covers easily.
+- Each split searches only 120 paragraphs.
+- 24 test articles are few, and resampling them does not make them representative.
+- The questions were written while reading the paragraph, which favors lexical retrieval.
+- On dev, whole paragraphs sent about three times as much text as the 300-character chunkers (2547 against 646–833 characters). The selection rule did not weigh that cost. This compares chunkers, not the two locked test settings.
+- These results are about this setup, not about Turkish RAG in general.
+
 ## Why evidence is a span, not a chunk id
 
 Most RAG test sets label the correct chunk ids. Those ids change when the chunking changes, so the labels cannot fairly compare a 256-character run with a 512-character run.
@@ -316,6 +357,7 @@ generation:
 - **Abstention depends on the labels.** "Unanswerable" means no evidence was labeled in this corpus, not that no answer exists anywhere.
 - **Generation has not been run against a real API yet.** Every generation, judge and cache test uses a scripted fake model and a stub embedder, so there are no real generation numbers in this README.
 - **Generation runs one question at a time.** With the cache off, re-running repeats every paid call.
+- **HTML reports can be large.** The page writes every retrieved chunk's text for every question, so it grows with questions × experiments × depth × chunk length. The locked XQuAD-tr test report (575 questions, 2 experiments, depth 20, whole paragraphs) is 21.5 MB and may be slow to open.
 
 ## Project layout
 
@@ -325,6 +367,7 @@ src/ragtriage/
 ├── matching.py           # which evidence does a chunk cover?
 ├── metrics/retrieval.py  # pure metric functions and failure types
 ├── metrics/statistics.py # bootstrap intervals and paired permutation tests
+├── converters/squad.py  # SQuAD-format data (XQuAD) to documents and test sets
 ├── evaluate.py           # score runs against a test set
 ├── datasets.py           # load documents and JSONL test sets
 ├── config.py             # validated YAML experiment file

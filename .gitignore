@@ -16,3 +16,6 @@ build/
 # Local run outputs
 results/
 .ragtriage_cache/
+
+# Downloaded datasets (see examples/*/SOURCE.md to recreate)
+data/

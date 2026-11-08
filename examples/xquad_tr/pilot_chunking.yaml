@@ -1,0 +1,22 @@
+# Stage 2 of PLAN.md: compare chunkers with the stage 1 tokenizer (turkish_prefix).
+# Needs: python examples/xquad_tr/prepare.py
+documents: ../../data/xquad_tr/dev/docs
+dataset: ../../data/xquad_tr/dev/pilot_qa.jsonl
+k: 3
+depth: 20
+experiments:
+  - name: paragraph
+    chunker: {type: fixed, size: 4000}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+  - name: fixed 300
+    chunker: {type: fixed, size: 300, overlap: 50}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+  - name: fixed 500
+    chunker: {type: fixed, size: 500, overlap: 50}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+  - name: sentence 300
+    chunker: {type: sentence, max_chars: 300}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
+  - name: recursive 300
+    chunker: {type: recursive, size: 300, overlap: 50}
+    retriever: {type: bm25, tokenizer: turkish_prefix}

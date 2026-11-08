@@ -1,0 +1,13 @@
+# LOCKED for the single test run (see PLAN.md). Do not edit after the test split is opened.
+# Needs: python examples/xquad_tr/prepare.py
+documents: ../../data/xquad_tr/test/docs
+dataset: ../../data/xquad_tr/test/qa.jsonl
+k: 3
+depth: 20
+experiments:
+  - name: paragraph, naive
+    chunker: {type: fixed, size: 4000}
+    retriever: {type: bm25, tokenizer: naive}
+  - name: paragraph, prefix
+    chunker: {type: fixed, size: 4000}
+    retriever: {type: bm25, tokenizer: turkish_prefix}

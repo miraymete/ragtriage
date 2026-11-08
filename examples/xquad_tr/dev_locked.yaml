@@ -1,0 +1,13 @@
+# The locked pair on full dev: fixed baseline and the setting chosen by PLAN.md.
+# Needs: python examples/xquad_tr/prepare.py
+documents: ../../data/xquad_tr/dev/docs
+dataset: ../../data/xquad_tr/dev/qa.jsonl
+k: 3
+depth: 20
+experiments:
+  - name: paragraph, naive
+    chunker: {type: fixed, size: 4000}
+    retriever: {type: bm25, tokenizer: naive}
+  - name: paragraph, prefix
+    chunker: {type: fixed, size: 4000}
+    retriever: {type: bm25, tokenizer: turkish_prefix}
