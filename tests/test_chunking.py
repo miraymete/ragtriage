@@ -1,7 +1,7 @@
 from itertools import pairwise
 
 import pytest
-from hypothesis import given
+from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
 from ragtriage import Document
@@ -154,7 +154,11 @@ def assert_valid(text, chunks, limit):
     assert all(text[i].isspace() for i in missing), "only whitespace may be dropped"
 
 
+# The measured delay comes from Hypothesis scanning newly imported modules after the optional SDK
+# imports of earlier tests; these strategies do no filtering or rejection. This suppression can
+# also hide future slowness in the strategies of this test.
 @given(all_text, limits, st.integers(min_value=0, max_value=3))
+@settings(suppress_health_check=[HealthCheck.too_slow])
 def test_chunk_sentences_invariants(text, limit, overlap):
     chunks = chunk_sentences(Document(id="d", text=text), limit, overlap)
     assert_valid(text, chunks, limit)
