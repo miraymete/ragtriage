@@ -19,7 +19,13 @@ from ragtriage.generation.judge import FaithfulnessJudge
 from ragtriage.generation.pipeline import run_generation
 from ragtriage.generation.relevance import RelevanceJudge
 from ragtriage.generation.report import GenerationReport, Rate
-from ragtriage.html_report import ReportData, render_report
+from ragtriage.html_report import (
+    HtmlDetail,
+    ReportData,
+    ReportOptions,
+    check_report_options,
+    render_report,
+)
 from ragtriage.metrics.retrieval import Failure
 from ragtriage.metrics.statistics import (
     BootstrapSettings,
@@ -378,6 +384,14 @@ def run(
     html: Annotated[
         Path | None, typer.Option(help="Also write a single-file HTML report of this run.")
     ] = None,
+    html_detail: Annotated[
+        HtmlDetail | None,
+        typer.Option(help="compact (default): passages only for questions with a problem."),
+    ] = None,
+    html_depth: Annotated[
+        int | None,
+        typer.Option(help="Retrieved results to write per question. Changes the HTML only."),
+    ] = None,
     group_stats: Annotated[
         bool,
         typer.Option(
@@ -391,12 +405,17 @@ def run(
     if (baseline is None) != (candidate is None):
         typer.echo("error: --baseline and --candidate must be given together", err=True)
         raise typer.Exit(code=2)
+    if html is None and (html_detail is not None or html_depth is not None):
+        typer.echo("error: --html-detail and --html-depth need --html", err=True)
+        raise typer.Exit(code=2)
+    report_options = ReportOptions(detail=html_detail or HtmlDetail.COMPACT, max_rank=html_depth)
     try:
         bootstrap = BootstrapSettings(confidence=confidence, n_resamples=resamples, seed=seed)
         permutation = PermutationSettings(n_draws=permutations, seed=seed)
         config = load_config(config_path)
         if baseline is not None and candidate is not None:
             _check_pair(config, baseline, candidate)
+        check_report_options(report_options, config.depth)
         retrieval = run_retrieval(config)
     except (ValueError, ImportError, OSError, yaml.YAMLError) as error:
         typer.echo(f"error: {error}", err=True)
@@ -553,7 +572,8 @@ def run(
                 generation=reports,
                 group_statistics=group_stats_results,
                 group_comparison=group_comparison,
-            )
+            ),
+            report_options,
         )
         html.write_text(page, encoding="utf-8")
         typer.echo(f"Wrote {html}")

@@ -222,7 +222,8 @@ The page has:
   - The retrieval table for every experiment, with the number of questions scored and excluded.
   - Bootstrap intervals and the paired comparison, when they were computed. The page names the method (exact or Monte Carlo) and labels every p-value unadjusted.
   - Generation, faithfulness and relevance, when they ran. The page shows not applicable, failed and stopped results apart. It also shows generator and judge usage on separate rows, with cache and fake responses marked.
-- **One collapsible block per question**, sorted by recall@k (lowest first), then reciprocal rank, then question id. Each block holds:
+- **A note saying what the page includes**, with per-experiment counts: questions with passages, questions without them, problems by type, and retrieved results written, hidden or left out. When generation ran, a second table separates why judges gave no score.
+- **One block per question**, sorted by recall@k (lowest first), then reciprocal rank, then question id. The default compact report limits only gold evidence and retrieved passages (see [report size](#report-detail-and-size)). A complete block holds:
   - The gold evidence spans.
   - The top-k chunks, separate from the deeper results that are used only for triage. Each chunk shows its rank, `doc_id` and character range.
   - The context actually sent to the model.
@@ -231,6 +232,41 @@ The page has:
 - **Questions labeled unanswerable** are listed apart and never shown as retrieval failures. In a stopped run, questions without a result say so, and experiments that never started are marked.
 
 All text from documents, questions, answers, model output and errors is HTML-escaped, including inside highlights. **The file stores questions, passages and answers as plain text**, so treat it like the documents themselves. Responses from the scripted test model are marked as fake. The page never names a winner.
+
+### Report detail and size
+
+| Option | Values | Effect |
+|---|---|---|
+| `--html-detail` | `compact` (default), `full` | `compact` writes gold evidence and retrieved passages only for questions with a problem. `full` writes them for every question. |
+| `--html-depth` | 1 to the config's `depth` | The most retrieved results written per question. Default: all of them. Works with both modes. |
+
+Both options need `--html`, and an out-of-range depth stops the run before retrieval starts. They change the page only: `k`, `depth`, every metric and the `--out` JSON stay the same, and the summary tables are identical in every mode.
+
+**What a compact report keeps and leaves out.** Every question keeps its result, recall@k and reciprocal rank. When generation ran, every question also keeps its answer or abstention and its metric outcomes on the page without a click, and one click shows its judge details and the complete context sent to the model. Only gold evidence and retrieved passages are limited. Where they are left out they are really absent rather than collapsed, because a closed `<details>` costs the same bytes. A generation report therefore stays larger than a retrieval-only one. Use `--html-detail full` for every question's passages.
+
+A question gets its gold evidence and retrieved passages when it has at least one of:
+
+- a `retrieval` or `ranking` failure
+- a failed generation
+- an abstention that disagrees with the label
+- unsupported claims (faithfulness below 1)
+- a failed judge
+- a judge result that could not be evaluated
+- the call that stopped the run
+
+Judge results without a score are shown as three different things:
+
+| Reason | Shown as | Selects the question |
+|---|---|---|
+| `abstained` | `N/A: abstained`: the model abstained | No. A wrong abstention selects it through the label check. |
+| `no_valid_answer` | `not run: no_valid_answer`: generation failed, so there was nothing to judge | Yes, through the failed generation. |
+| `empty_answer`, `no_claims`, `uncertain_claims` or any other reason | `not evaluated: …`: an answer could not be evaluated | Yes |
+
+A low answer-relevance score selects nothing, since the tool has no threshold for it.
+
+**Display depth and generation.** `--html-depth` can be smaller than `k`. The context actually sent to the model is listed separately and is never cut, and each block says how many deeper results were not written. With a small `--html-depth`, the rank where a ranking failure finally found its evidence may not be on the page; its reciprocal rank still is.
+
+Passages are not deduplicated into a shared catalog. Highlights depend on the question, and following links away from a question to read its passages would make triage harder. `full` reports therefore stay large.
 
 ## Turkish text
 
@@ -357,7 +393,7 @@ generation:
 - **Abstention depends on the labels.** "Unanswerable" means no evidence was labeled in this corpus, not that no answer exists anywhere.
 - **Generation has not been run against a real API yet.** Every generation, judge and cache test uses a scripted fake model and a stub embedder, so there are no real generation numbers in this README.
 - **Generation runs one question at a time.** With the cache off, re-running repeats every paid call.
-- **HTML reports can be large.** The page writes every retrieved chunk's text for every question, so it grows with questions × experiments × depth × chunk length. The locked XQuAD-tr test report (575 questions, 2 experiments, depth 20, whole paragraphs) is 21.5 MB and may be slow to open.
+- **Full-detail HTML reports can be large.** `--html-detail full` writes every retrieved chunk's text for every question, so it grows with questions × experiments × depth × chunk length. The locked XQuAD-tr test report, generated in that form before the compact mode existed (575 questions, 2 experiments, depth 20, whole paragraphs), is 21.5 MB and may be slow to open. A compact report grows with the number of questions that have a problem and, when generation ran, with the context sent for every question, so it can still be large.
 
 ## Project layout
 

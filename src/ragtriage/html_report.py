@@ -3,6 +3,11 @@
 Every piece of dynamic text goes through `_e` (html.escape). Highlighting escapes each segment on
 its own and only then wraps it in <mark>, so a highlight can never open a tag. Character offsets are
 Python string indices (Unicode code points), the same as every span in ragtriage.
+
+The default report is compact: gold evidence and retrieved passages are written only for questions
+with a problem. Answers, metric outcomes and the context sent to the model are always kept. Content
+left out is really left out of the file; a closed <details> would still cost its full size.
+ReportOptions changes the page only, never a result.
 """
 
 from __future__ import annotations
@@ -10,12 +15,13 @@ from __future__ import annotations
 import html
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
 from ragtriage.evaluate import ExampleScore
 from ragtriage.generation.generator import GenerationRecord, GenerationStatus
 from ragtriage.generation.judge import FaithfulnessResult, JudgeCall
 from ragtriage.generation.relevance import RelevanceResult
-from ragtriage.generation.report import GenerationReport, Rate, UsageSummary
+from ragtriage.generation.report import GenerationReport, Rate, StopAttempt, UsageSummary
 from ragtriage.matching import covers
 from ragtriage.metrics.retrieval import Failure
 from ragtriage.metrics.statistics import (
@@ -47,6 +53,27 @@ class ReportData:
     generation: Sequence[GenerationReport] | None = None
     group_statistics: Sequence[GroupStatistics] | None = None
     group_comparison: GroupComparison | None = None
+
+
+class HtmlDetail(StrEnum):
+    COMPACT = "compact"
+    FULL = "full"
+
+
+@dataclass(frozen=True)
+class ReportOptions:
+    detail: HtmlDetail = HtmlDetail.COMPACT
+    # The last rank written for a question's retrieved results. None: every retrieved result.
+    max_rank: int | None = None
+
+
+def check_report_options(options: ReportOptions, depth: int) -> None:
+    """A limit outside 1..depth could only hide everything or do nothing, so it is an error."""
+    if options.max_rank is not None and not 1 <= options.max_rank <= depth:
+        raise ValueError(
+            f"the HTML display depth must be between 1 and the run's depth ({depth}), "
+            f"got {options.max_rank}"
+        )
 
 
 def _e(value: object) -> str:
@@ -502,6 +529,201 @@ def _generation_summary(data: ReportData) -> str:
     return "".join(parts)
 
 
+# --- which questions get passages -------------------------------------------------------------
+
+# Why a judge did not score an answer. These are different things and are shown apart:
+# the model abstained; generation failed, so there was nothing to judge; or the answer existed and
+# could not be evaluated (every other reason, including one added later).
+_ABSTAINED = "abstained"
+_GENERATION_FAILED = "no_valid_answer"
+
+
+@dataclass(frozen=True)
+class Issue:
+    kind: str  # retrieval, ranking, generation or judge
+    label: str
+
+
+def _judge_issue(name: str, outcome: Outcome) -> Issue | None:
+    if isinstance(outcome, Failed):
+        return Issue("judge", f"{name} failed")
+    if isinstance(outcome, NotApplicable) and outcome.reason not in (
+        _ABSTAINED,
+        _GENERATION_FAILED,  # already reported as the failed generation itself
+    ):
+        return Issue("judge", f"{name} not evaluated: {outcome.reason}")
+    return None
+
+
+def question_issues(
+    score: ExampleScore | None,
+    record: GenerationRecord | None,
+    stop: StopAttempt | None = None,
+) -> tuple[Issue, ...]:
+    """Why a compact report writes this question's gold evidence and retrieved passages."""
+    issues: list[Issue | None] = []
+    if score is not None and score.failure is not Failure.OK:
+        issues.append(Issue(score.failure.value, score.failure.value))
+    if stop is not None:
+        kind = "generation" if stop.role == "generator" else "judge"
+        issues.append(Issue(kind, "stopped the run here"))
+    if record is not None:
+        if record.status is not GenerationStatus.OK:
+            issues.append(Issue("generation", f"generation {record.status.value}"))
+        elif isinstance(record.abstention, Scored) and record.abstention.value < 1:
+            wrong = "abstained on answerable" if record.answerable else "answered unanswerable"
+            issues.append(Issue("generation", wrong))
+        if record.faithfulness is not None:
+            outcome = record.faithfulness.outcome
+            if isinstance(outcome, Scored) and outcome.value < 1:
+                issues.append(Issue("generation", "unsupported claims"))
+            issues.append(_judge_issue("faithfulness", outcome))
+        if record.relevance is not None:
+            issues.append(_judge_issue("relevance", record.relevance.outcome))
+    return tuple(issue for issue in issues if issue is not None)
+
+
+@dataclass(frozen=True)
+class _Plan:
+    state: str  # off, on or not_started
+    records: Mapping[str, GenerationRecord]
+    issues: Mapping[str, tuple[Issue, ...]]
+    detailed: frozenset[str]
+
+
+def _plan(data: ReportData, index: int, options: ReportOptions) -> _Plan:
+    result, _ = data.experiments[index]
+    reports = data.generation
+    state = "off" if reports is None else "on" if index < len(reports) else "not_started"
+    records: dict[str, GenerationRecord] = {}
+    stop: StopAttempt | None = None
+    if reports is not None and state == "on":
+        records = {r.example_id: r for r in reports[index].records}
+        stop = reports[index].stop_attempt
+    scores = {s.example_id: s for s in result.report.per_example}
+    issues = {}
+    for example in data.examples:
+        here = stop if stop is not None and stop.example_id == example.id else None
+        found = question_issues(scores.get(example.id), records.get(example.id), here)
+        if found:
+            issues[example.id] = found
+    full = options.detail is HtmlDetail.FULL
+    detailed = frozenset(e.id for e in data.examples if full or e.id in issues)
+    return _Plan(state, records, issues, detailed)
+
+
+def _judge_not_applicable(records: Mapping[str, GenerationRecord]) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {"abstained": {}, "failed": {}, "not_evaluated": {}}
+    for record in records.values():
+        for name, item in (("faithfulness", record.faithfulness), ("relevance", record.relevance)):
+            outcome = None if item is None else item.outcome
+            if not isinstance(outcome, NotApplicable):
+                continue
+            group = {_ABSTAINED: "abstained", _GENERATION_FAILED: "failed"}.get(
+                outcome.reason, "not_evaluated"
+            )
+            key = f"{name}: {outcome.reason}"
+            counts[group][key] = counts[group].get(key, 0) + 1
+    return counts
+
+
+def _detail_section(data: ReportData, options: ReportOptions) -> str:
+    rows = []
+    not_applicable_rows = []
+    for index, (result, runs) in enumerate(data.experiments):
+        plan = _plan(data, index, options)
+        by_kind = {
+            kind: sum(any(i.kind == kind for i in found) for found in plan.issues.values())
+            for kind in ("retrieval", "ranking", "generation", "judge")
+        }
+        written = hidden = omitted = 0
+        for run in runs:
+            if run.example_id not in plan.detailed:
+                omitted += len(run.chunks)
+                continue
+            shown = _n_shown(run, options.max_rank)
+            written += shown
+            hidden += len(run.chunks) - shown
+        rows.append(
+            [
+                _e(result.name),
+                str(len(data.examples)),
+                str(len(plan.detailed)),
+                str(len(data.examples) - len(plan.detailed)),
+                *(str(count) for count in by_kind.values()),
+                str(written),
+                str(hidden),
+                str(omitted),
+            ]
+        )
+        groups = _judge_not_applicable(plan.records)
+        not_applicable_rows.append(
+            [
+                _e(result.name),
+                _counts(groups["abstained"]),
+                _counts(groups["failed"]),
+                _counts(groups["not_evaluated"]),
+            ]
+        )
+    head = [
+        "Experiment",
+        "Questions",
+        "With retrieval passages",
+        "Without retrieval passages",
+        "Retrieval problems",
+        "Ranking problems",
+        "Generation problems",
+        "Judge problems",
+        "Retrieved results written",
+        "Hidden by display depth",
+        "Left out of questions without passages",
+    ]
+    if options.detail is HtmlDetail.FULL:
+        rule = (
+            "<p><strong>Full detail.</strong> Every question has its passages, gold evidence and "
+            "any generation result.</p>"
+        )
+    else:
+        rule = (
+            "<p><strong>Compact report.</strong> Every question stays on this page with its "
+            "scores. When generation ran, every question also keeps its answer or abstention, "
+            "its metric outcomes, its judge details and the complete context sent to the model. "
+            "Only gold evidence and retrieved passages are limited. They are written for a "
+            "question with at least one of: a retrieval or ranking failure; a failed generation; "
+            "an abstention that disagrees with the label; unsupported claims; a failed judge; a "
+            "judge result that could not be evaluated; the call that stopped the run. The summary "
+            "tables above use every question.</p>"
+            "<p>Labeled unanswerable questions are not retrieval failures. Answer relevance has "
+            "no threshold, so a low score alone selects nothing. For every question's passages, "
+            "use <code>--html-detail full</code>.</p>"
+        )
+    if options.max_rank is not None:
+        rule += (
+            f"<p>Display depth: at most {options.max_rank} retrieved results are written per "
+            f"question. Evaluation still used k = {data.k} and depth = {data.depth}, and the JSON "
+            "results are unchanged. The context actually sent to the generator is never cut by "
+            "this limit.</p>"
+        )
+    section = f'<h3>What this page includes</h3><div class="note">{rule}</div>' + _table(head, rows)
+    if data.generation is not None:
+        section += (
+            "<h4>Why a judge gave no score</h4>"
+            '<p class="muted">Counted per judge result. The first column is an abstention, the '
+            "second follows a failed generation, and the third means an answer existed but could "
+            "not be evaluated.</p>"
+            + _table(
+                [
+                    "Experiment",
+                    "Model abstained",
+                    "Generation failed: nothing to judge",
+                    "Could not be evaluated",
+                ],
+                not_applicable_rows,
+            )
+        )
+    return section
+
+
 # --- per question -----------------------------------------------------------------------------
 
 
@@ -549,9 +771,16 @@ def _chunks(
     return '<ol class="plain">' + "".join(rows) + "</ol>"
 
 
-def _retrieved(run: RetrievalRun, example: QAExample, k: int, min_overlap: float) -> str:
+def _n_shown(run: RetrievalRun, max_rank: int | None) -> int:
+    return len(run.chunks) if max_rank is None else min(len(run.chunks), max_rank)
+
+
+def _retrieved(
+    run: RetrievalRun, example: QAExample, k: int, min_overlap: float, max_rank: int | None
+) -> str:
     seen: dict[tuple[str, int, int], int] = {}
-    ranked = list(enumerate(run.chunks, start=1))
+    n_shown = _n_shown(run, max_rank)
+    ranked = list(enumerate(run.chunks[:n_shown], start=1))
     top, deep = ranked[:k], ranked[k:]
     parts = [
         f"<h4>Top {k} (what the generator is given)</h4>",
@@ -563,6 +792,13 @@ def _retrieved(run: RetrievalRun, example: QAExample, k: int, min_overlap: float
             "(retrieval triage only: results at these ranks were not added to the generation "
             "context)</summary>" + _chunks(deep, example, min_overlap, seen, k) + "</details>"
         )
+    hidden = len(run.chunks) - n_shown
+    if hidden:
+        parts.append(
+            f'<p class="muted">{hidden} more retrieved results not written here (ranks '
+            f"{n_shown + 1}–{len(run.chunks)}): the display depth is {max_rank}. Metrics still "
+            "use them.</p>"
+        )
     return "".join(parts)
 
 
@@ -570,7 +806,11 @@ def _outcome(outcome: Outcome) -> str:
     if isinstance(outcome, Scored):
         return _badge(f"scored {outcome.value:.3f}", "ok")
     if isinstance(outcome, NotApplicable):
-        return _badge(f"N/A: {outcome.reason}", "na")
+        if outcome.reason == _ABSTAINED:
+            return _badge(f"N/A: {outcome.reason}", "na")
+        if outcome.reason == _GENERATION_FAILED:
+            return _badge(f"not run: {outcome.reason}", "bad")
+        return _badge(f"not evaluated: {outcome.reason}", "warn")
     assert isinstance(outcome, Failed)
     return _badge("failed", "bad") + f" <span>{_e(outcome.reason)}</span>"
 
@@ -635,7 +875,9 @@ def _generation(
     example: QAExample,
     documents: Mapping[str, Document],
     state: str,
+    inline: bool = False,
 ) -> str:
+    """With `inline`, the answer is already on the page and the context needs no second click."""
     if state == "off":
         return ""
     if record is None:
@@ -657,7 +899,7 @@ def _generation(
     if record.status is GenerationStatus.OK:
         abstained = "abstained" if record.abstained else "answered"
         lines.append(f"<p>{_badge(abstained, 'na')} Abstention: {_outcome(record.abstention)}</p>")
-        if record.answer:
+        if record.answer and not inline:
             lines.append(f"<pre>{_e(record.answer)}</pre>")
     else:
         lines.append(f"<p>Problem: {_e(record.problem or 'unknown')}</p>")
@@ -677,15 +919,77 @@ def _generation(
         + "</pre></li>"
         for c in record.contexts
     )
+    heading = f"Context actually sent to the model ({len(record.contexts)} chunks)"
+    listed = f'<ol class="plain">{context}</ol>'
     lines.append(
-        f"<details><summary>Context actually sent to the model ({len(record.contexts)} "
-        f'chunks)</summary><ol class="plain">{context}</ol></details>'
+        f"<h4>{heading}</h4>{listed}"
+        if inline
+        else f"<details><summary>{heading}</summary>{listed}</details>"
     )
     if record.faithfulness is not None:
         lines.append(_faithfulness(record.faithfulness))
     if record.relevance is not None:
         lines.append(_relevance(record.relevance))
     return "".join(lines)
+
+
+def _generation_brief(record: GenerationRecord | None, state: str) -> str:
+    """Status, abstention and every metric outcome, with no passage text."""
+    if state == "not_started":
+        return _badge("not started", "warn")
+    if record is None:
+        return _badge("no generation result", "warn")
+    parts = []
+    if record.status is GenerationStatus.OK:
+        parts.append(_badge("generation ok", "ok"))
+        parts.append(_badge("abstained" if record.abstained else "answered", "na"))
+    if record.faithfulness is not None:
+        parts.append(f"faithfulness {_outcome(record.faithfulness.outcome)}")
+    if record.relevance is not None:
+        parts.append(f"relevance {_outcome(record.relevance.outcome)}")
+    if "fake" in (record.source, record.original_source):
+        parts.append(_badge("FAKE", "fake"))
+    return " ".join(parts)
+
+
+def _question_line(
+    example: QAExample,
+    score: ExampleScore | None,
+    record: GenerationRecord | None,
+    state: str,
+    k: int,
+    issues: Sequence[Issue],
+) -> str:
+    if score is not None:
+        failure = score.failure
+        kind = {"ok": "ok", "ranking": "warn", "retrieval": "bad"}[failure.value]
+        line = (
+            f"{_badge(failure.value, kind)} <strong>{_e(example.id)}</strong> · recall@{k} "
+            f"{score.scores[f'recall@{k}']:.3f} · RR {score.scores['mrr']:.3f}"
+        )
+    else:
+        line = f"{_badge('labeled unanswerable', 'na')} <strong>{_e(example.id)}</strong>"
+    if state == "on":
+        line += " · " + _generation_brief(record, state)
+    # Retrieval and ranking already have their badge at the front of the line.
+    return line + "".join(
+        " " + _badge(i.label, "bad") for i in issues if i.kind in ("generation", "judge")
+    )
+
+
+def _gold_block(example: QAExample, documents: Mapping[str, Document]) -> str:
+    if example.answerable:
+        return _evidence_block(example, documents)
+    return (
+        "<p>No evidence is labeled for this question: it is labeled unanswerable from this "
+        "corpus. It is not a retrieval failure and is not in any retrieval metric.</p>"
+    )
+
+
+def _reference(example: QAExample) -> str:
+    if not example.reference_answer:
+        return ""
+    return f"<h4>Reference answer</h4><pre>{_e(example.reference_answer)}</pre>"
 
 
 def _question(
@@ -695,53 +999,122 @@ def _question(
     record: GenerationRecord | None,
     state: str,
     data: ReportData,
+    issues: Sequence[Issue],
+    max_rank: int | None,
 ) -> str:
-    k = data.k
-    if score is not None:
-        failure = score.failure
-        kind = {"ok": "ok", "ranking": "warn", "retrieval": "bad"}[failure.value]
-        summary = (
-            f"{_badge(failure.value, kind)} <strong>{_e(example.id)}</strong> · recall@{k} "
-            f"{score.scores[f'recall@{k}']:.3f} · RR {score.scores['mrr']:.3f}"
-        )
-    else:
-        summary = f"{_badge('labeled unanswerable', 'na')} <strong>{_e(example.id)}</strong>"
-    if state == "on" and record is not None:
-        summary += " · " + (
-            _badge("generation ok", "ok")
-            if record.status is GenerationStatus.OK
-            else _badge(f"generation {record.status.value}", "bad")
-        )
-        if "fake" in (record.source, record.original_source):
-            summary += " " + _badge("FAKE", "fake")
-    elif state == "on":
-        summary += " · " + _badge("no generation result", "warn")
-    body = [f'<p class="question">{_e(example.question)}</p>']
-    if example.answerable:
-        body.append(_evidence_block(example, data.documents))
-    else:
-        body.append(
-            "<p>No evidence is labeled for this question: it is labeled unanswerable from this "
-            "corpus. It is not a retrieval failure and is not in any retrieval metric.</p>"
-        )
-    if example.reference_answer:
-        body.append(f"<h4>Reference answer</h4><pre>{_e(example.reference_answer)}</pre>")
-    body.append(_retrieved(run, example, k, data.min_overlap))
-    body.append(_generation(record, example, data.documents, state))
+    """A full block: everything about the question, collapsed behind one summary line."""
+    summary = _question_line(example, score, record, state, data.k, issues)
+    body = [
+        f'<p class="question">{_e(example.question)}</p>',
+        _gold_block(example, data.documents),
+        _reference(example),
+        _retrieved(run, example, data.k, data.min_overlap, max_rank),
+        _generation(record, example, data.documents, state),
+    ]
     return f'<details class="q"><summary>{summary}</summary>{"".join(body)}</details>'
 
 
-def _experiment_questions(data: ReportData, index: int) -> str:
+def _visible_answer(record: GenerationRecord | None) -> str:
+    if record is None:
+        return ""
+    if record.status is not GenerationStatus.OK:
+        return f"<p>No valid answer: {_e(record.problem or record.status.value)}</p>"
+    if record.answer:
+        return f"<pre>{_e(record.answer)}</pre>"
+    return (
+        "<p>No answer text: the model abstained.</p>" if record.abstained else "<p>No answer.</p>"
+    )
+
+
+def _answer_block(
+    example: QAExample,
+    score: ExampleScore | None,
+    run: RetrievalRun,
+    record: GenerationRecord | None,
+    data: ReportData,
+    issues: Sequence[Issue],
+    max_rank: int | None,
+    with_passages: bool,
+) -> str:
+    """A compact block when generation ran: the outcome and answer stay visible without a click."""
+    line = _question_line(example, score, record, "on", data.k, issues)
+    head = f'<div class="q"><p>{line}</p><p class="question">{_e(example.question)}</p>'
+    head += _visible_answer(record)
+    inner = [_reference(example)]
+    label = "Context sent to the model and generation details"
+    if with_passages:
+        label = "Gold evidence, retrieved passages, " + label[0].lower() + label[1:]
+        inner.insert(0, _gold_block(example, data.documents))
+        inner.append(_retrieved(run, example, data.k, data.min_overlap, max_rank))
+    if record is not None or with_passages:
+        inner.append(_generation(record, example, data.documents, "on", inline=True))
+        head += f"<details><summary>{label}</summary>{''.join(inner)}</details>"
+    return head + "</div>"
+
+
+def _summary_rows(
+    examples: Sequence[QAExample], scores: Mapping[str, ExampleScore], plan: _Plan, k: int
+) -> str:
+    has_generation = plan.state != "off"
+    rows = []
+    for example in examples:
+        score = scores.get(example.id)
+        if score is None:
+            cells = [_badge("labeled unanswerable", "na"), _e(example.id), "—", "—"]
+        else:
+            cells = [
+                _badge(score.failure.value, "ok"),
+                _e(example.id),
+                f"{score.scores[f'recall@{k}']:.3f}",
+                f"{score.scores['mrr']:.3f}",
+            ]
+        if has_generation:
+            cells.append(_generation_brief(plan.records.get(example.id), plan.state))
+        cells.append(_e(example.question))
+        rows.append(cells)
+    head = ["Result", "Question id", f"Recall@{k}", "RR"]
+    head += ["Generation", "Question"] if has_generation else ["Question"]
+    return _table(head, rows)
+
+
+def _question_blocks(
+    examples: Sequence[QAExample],
+    scores: Mapping[str, ExampleScore],
+    runs_by_id: Mapping[str, RetrievalRun],
+    plan: _Plan,
+    data: ReportData,
+    options: ReportOptions,
+) -> list[str]:
+    def block(example: QAExample) -> str:
+        args = (
+            example,
+            scores.get(example.id),
+            runs_by_id[example.id],
+            plan.records.get(example.id),
+        )
+        issues = plan.issues.get(example.id, ())
+        if options.detail is HtmlDetail.COMPACT and plan.state == "on":
+            detailed = example.id in plan.detailed
+            return _answer_block(*args, data, issues, options.max_rank, detailed)
+        return _question(*args, plan.state, data, issues, options.max_rank)
+
+    detailed = [e for e in examples if e.id in plan.detailed]
+    rest = [e for e in examples if e.id not in plan.detailed]
+    blocks = [block(e) for e in detailed]
+    if rest:
+        blocks.append(f"<h4>Without retrieval passages ({len(rest)})</h4>")
+        if plan.state == "on":
+            blocks.extend(block(e) for e in rest)
+        else:
+            blocks.append(_summary_rows(rest, scores, plan, data.k))
+    return blocks
+
+
+def _experiment_questions(data: ReportData, index: int, options: ReportOptions) -> str:
     result, runs = data.experiments[index]
     runs_by_id = {run.example_id: run for run in runs}
     scores = {s.example_id: s for s in result.report.per_example}
-    reports = data.generation
-    if reports is None:
-        state, records = "off", {}
-    elif index < len(reports):
-        state, records = "on", {r.example_id: r for r in reports[index].records}
-    else:
-        state, records = "not_started", {}
+    plan = _plan(data, index, options)
     k = data.k
     answerable = sorted(
         (e for e in data.examples if e.id in scores),
@@ -749,7 +1122,7 @@ def _experiment_questions(data: ReportData, index: int) -> str:
     )
     unanswerable = sorted((e for e in data.examples if not e.answerable), key=lambda e: e.id)
     parts = [f'<details class="exp"><summary><strong>{_e(result.name)}</strong></summary>']
-    if state == "not_started":
+    if plan.state == "not_started":
         parts.append(
             '<div class="note bad">Generation was not started for this experiment: the run '
             "stopped in an earlier one.</div>"
@@ -758,20 +1131,14 @@ def _experiment_questions(data: ReportData, index: int) -> str:
         f'<h3>Answerable questions ({len(answerable)})</h3><p class="muted">Sorted by '
         f"recall@{k} (lowest first), then reciprocal rank (lowest first), then question id.</p>"
     )
-    parts.extend(
-        _question(e, scores[e.id], runs_by_id[e.id], records.get(e.id), state, data)
-        for e in answerable
-    )
+    parts.extend(_question_blocks(answerable, scores, runs_by_id, plan, data, options))
     if unanswerable:
         parts.append(
             f'<h3>Labeled unanswerable ({len(unanswerable)})</h3><p class="muted">No evidence '
             "is labeled in this corpus. These are excluded from retrieval metrics. Abstaining "
             "on them is the expected behavior. Sorted by question id.</p>"
         )
-        parts.extend(
-            _question(e, None, runs_by_id[e.id], records.get(e.id), state, data)
-            for e in unanswerable
-        )
+        parts.extend(_question_blocks(unanswerable, scores, runs_by_id, plan, data, options))
     parts.append("</details>")
     return "".join(parts)
 
@@ -810,7 +1177,7 @@ background:var(--card)}.note.bad{border-color:var(--bad)}.note.fake{border-color
 details{margin:6px 0}summary{cursor:pointer}
 details.exp{border:1px solid var(--line);border-radius:8px;padding:8px 12px;background:var(--card)}
 details.exp>summary{font-size:1.05rem}
-details.q{border-top:1px solid var(--line);padding:6px 0}
+.q{border-top:1px solid var(--line);padding:6px 0}
 .question{font-size:1.05rem;font-weight:600}
 .span{font:12px ui-monospace,Consolas,monospace;color:var(--muted)}
 ol.plain{padding-left:1.2rem}
@@ -880,9 +1247,11 @@ def _banner(data: ReportData) -> str:
     return '<div class="note">' + "".join(notes) + "</div>"
 
 
-def render_report(data: ReportData) -> str:
+def render_report(data: ReportData, options: ReportOptions | None = None) -> str:
     if not data.experiments:
         raise ValueError("no experiments to report")
+    options = options or ReportOptions()
+    check_report_options(options, data.depth)
     body = [
         "<h1>ragtriage report</h1>",
         _banner(data),
@@ -892,7 +1261,8 @@ def render_report(data: ReportData) -> str:
         _generation_summary(data),
         '<section><h2>Questions</h2><p class="muted">One block per experiment. Open a '
         "question to see its gold evidence, the retrieved chunks and any generation result.</p>",
-        *(_experiment_questions(data, i) for i in range(len(data.experiments))),
+        _detail_section(data, options),
+        *(_experiment_questions(data, i, options) for i in range(len(data.experiments))),
         "</section>",
     ]
     return (
