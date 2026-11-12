@@ -15,6 +15,8 @@ pip install -e ".[dev]"
 ragtriage run examples/turkish_quickstart/config.yaml --failures
 ```
 
+Windows setup, missing files or extras, and large reports: see [Troubleshooting](docs/troubleshooting.md).
+
 ## Define experiments in YAML
 
 Each experiment combines a chunker and a retriever, and one command compares them:
