@@ -554,6 +554,7 @@ def run(
         if reports is not None:
             for item, report in zip(payload, reports, strict=False):
                 item["generation"] = report.model_dump(mode="json")
+        out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         typer.echo(f"Wrote {out}")
 
@@ -575,6 +576,7 @@ def run(
             ),
             report_options,
         )
+        html.parent.mkdir(parents=True, exist_ok=True)
         html.write_text(page, encoding="utf-8")
         typer.echo(f"Wrote {html}")
 

@@ -183,6 +183,17 @@ def test_cli_prints_table_and_writes_json(workspace):
     assert saved["report"]["per_example"][0]["example_id"] == "q1"
 
 
+def test_cli_creates_missing_folders_for_its_outputs(workspace):
+    # A fresh clone has no results/ folder. The run must not finish and then fail to save.
+    out = workspace / "results" / "nested" / "results.json"
+    html = workspace / "reports" / "nested" / "report.html"
+    args = ["run", str(write_config(workspace)), "--out", str(out), "--html", str(html)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    assert json.loads(out.read_text("utf-8"))[0]["name"] == "one"
+    assert html.read_text("utf-8").startswith("<!doctype html>")
+
+
 def test_cli_failures_flag_names_the_failed_question(workspace):
     (workspace / "qa.jsonl").write_text(
         '{"id": "q9", "question": "zürafa", '
