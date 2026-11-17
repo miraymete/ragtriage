@@ -56,7 +56,7 @@ class HashingEmbedderSpec(_Spec):
 
 class SentenceTransformerSpec(_Spec):
     type: Literal["sentence_transformers"]
-    model: str
+    model: str = Field(min_length=1)
     query_prefix: str = ""
     document_prefix: str = ""
     batch_size: int = Field(default=32, ge=1)

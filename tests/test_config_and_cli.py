@@ -10,6 +10,7 @@ from ragtriage.config import (
     FixedChunker,
     RecursiveChunker,
     SentenceChunker,
+    SentenceTransformerSpec,
     VectorSpec,
     load_config,
 )
@@ -108,6 +109,11 @@ def test_depth_must_exceed_k(workspace):
     )
     with pytest.raises(ValidationError, match="must exceed k"):
         load_config(path)
+
+
+def test_sentence_transformer_model_name_cannot_be_empty():
+    with pytest.raises(ValidationError, match="model"):
+        SentenceTransformerSpec(type="sentence_transformers", model="")
 
 
 def test_experiment_names_must_be_unique(workspace):
