@@ -227,3 +227,23 @@ def test_cli_reports_a_missing_file(workspace):
     result = runner.invoke(app, ["run", str(workspace / "nope.yaml")])
     assert result.exit_code == 2
     assert "error:" in result.output
+
+
+@pytest.mark.parametrize("cache_path", ['""', "."])
+def test_load_config_rejects_a_cache_path_that_is_a_directory(workspace, cache_path):
+    path = write_config(
+        workspace,
+        f"""\
+        documents: docs
+        dataset: qa.jsonl
+        experiments:
+          - name: f
+            chunker: {{type: fixed, size: 10}}
+            retriever: {{type: bm25}}
+        generation:
+          generator: {{provider: anthropic, model: m}}
+          cache: {{path: {cache_path}}}
+        """,
+    )
+    with pytest.raises(ValueError, match=r"cache path .* is a directory"):
+        load_config(path)

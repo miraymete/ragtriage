@@ -168,7 +168,13 @@ def load_config(path: str | Path) -> EvalConfig:
     base = path.resolve().parent
     generation = config.generation
     if generation is not None and generation.cache is not None:
-        cache = generation.cache.model_copy(update={"path": base / generation.cache.path})
+        cache_path = base / generation.cache.path
+        if generation.cache.enabled and cache_path.is_dir():
+            raise ValueError(
+                f"{path}: cache path {str(cache_path)!r} is a directory; "
+                "give a file name, for example .ragtriage_cache/responses.sqlite"
+            )
+        cache = generation.cache.model_copy(update={"path": cache_path})
         generation = generation.model_copy(update={"cache": cache})
     return config.model_copy(
         update={
