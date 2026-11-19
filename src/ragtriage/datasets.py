@@ -37,10 +37,16 @@ def resolve_quote(document: Document, quote: str, grade: int = 1) -> Evidence:
 
 
 def _parse_evidence(raw: dict[str, Any], documents: Mapping[str, Document]) -> Evidence:
-    doc_id = raw["doc_id"]
+    if not isinstance(raw, dict):
+        raise ValueError(f"evidence must be a mapping, got {type(raw).__name__}")
+    doc_id = raw.get("doc_id")
+    if doc_id is None:
+        raise ValueError("evidence is missing 'doc_id'")
     if doc_id not in documents:
         raise ValueError(f"unknown document {doc_id!r}")
     if "quote" in raw:
+        if not isinstance(raw["quote"], str) or not raw["quote"]:
+            raise ValueError(f"quote must be a non-empty string in {doc_id!r}: {raw['quote']!r}")
         return resolve_quote(documents[doc_id], raw["quote"], raw.get("grade", 1))
     evidence = Evidence.model_validate(raw)
     if evidence.end > len(documents[doc_id].text):
@@ -57,7 +63,12 @@ def load_qa_examples(path: str | Path, documents: Mapping[str, Document]) -> lis
                 continue
             try:
                 raw = json.loads(line)
-                raw["evidence"] = [_parse_evidence(e, documents) for e in raw.get("evidence", [])]
+                if not isinstance(raw, dict):
+                    raise ValueError(f"expected a JSON object, got {type(raw).__name__}")
+                evidence = raw.get("evidence", [])
+                if not isinstance(evidence, list):
+                    raise ValueError(f"'evidence' must be a list, got {type(evidence).__name__}")
+                raw["evidence"] = [_parse_evidence(e, documents) for e in evidence]
                 examples.append(QAExample.model_validate(raw))
             except (ValueError, KeyError) as error:
                 raise ValueError(f"{path}:{line_number}: {error}") from error

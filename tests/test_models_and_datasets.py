@@ -80,3 +80,27 @@ def test_load_documents_keeps_line_endings_so_offsets_stay_true(tmp_path):
 def test_load_documents_rejects_empty_directory(tmp_path):
     with pytest.raises(ValueError, match=r"no \.txt files"):
         load_documents(tmp_path)
+
+
+@pytest.mark.parametrize(
+    ("line", "message"),
+    [
+        ("[1]", "expected a JSON object"),
+        ('{"id": "q", "question": "?", "evidence": "d"}', "'evidence' must be a list"),
+        ('{"id": "q", "question": "?", "evidence": ["d"]}', "evidence must be a mapping"),
+        ('{"id": "q", "question": "?", "evidence": [{"quote": "Ankara"}]}', "missing 'doc_id'"),
+        (
+            '{"id": "q", "question": "?", "evidence": [{"doc_id": "d", "quote": ""}]}',
+            "quote must be a non-empty string",
+        ),
+        (
+            '{"id": "q", "question": "?", "evidence": [{"doc_id": "d", "quote": 5}]}',
+            "quote must be a non-empty string",
+        ),
+    ],
+)
+def test_malformed_test_set_lines_give_a_clear_error(tmp_path, line, message):
+    path = tmp_path / "qa.jsonl"
+    path.write_text(line + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=rf"qa\.jsonl:1:.*{message}"):
+        load_qa_examples(path, {"d": DOCUMENT})
