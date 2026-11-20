@@ -104,3 +104,12 @@ def test_malformed_test_set_lines_give_a_clear_error(tmp_path, line, message):
     path.write_text(line + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match=rf"qa\.jsonl:1:.*{message}"):
         load_qa_examples(path, {"d": DOCUMENT})
+
+
+def test_duplicate_question_ids_are_rejected_with_both_line_numbers(tmp_path):
+    path = tmp_path / "qa.jsonl"
+    rows = [{"id": "q1", "question": "a?"}, {"id": "q2", "question": "b?"}]
+    rows.append({"id": "q1", "question": "c?"})
+    path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=r"qa\.jsonl:3:.*duplicate question id 'q1'.*line 1"):
+        load_qa_examples(path, {"d": DOCUMENT})

@@ -56,7 +56,8 @@ def _parse_evidence(raw: dict[str, Any], documents: Mapping[str, Document]) -> E
 
 def load_qa_examples(path: str | Path, documents: Mapping[str, Document]) -> list[QAExample]:
     """Read a JSONL test set. Each evidence item has `doc_id` plus `quote` or `start`/`end`."""
-    examples = []
+    examples: list[QAExample] = []
+    seen_ids: dict[str, int] = {}
     with Path(path).open(encoding="utf-8") as handle:
         for line_number, line in enumerate(handle, start=1):
             if not line.strip():
@@ -69,7 +70,14 @@ def load_qa_examples(path: str | Path, documents: Mapping[str, Document]) -> lis
                 if not isinstance(evidence, list):
                     raise ValueError(f"'evidence' must be a list, got {type(evidence).__name__}")
                 raw["evidence"] = [_parse_evidence(e, documents) for e in evidence]
-                examples.append(QAExample.model_validate(raw))
+                example = QAExample.model_validate(raw)
+                if example.id in seen_ids:
+                    raise ValueError(
+                        f"duplicate question id {example.id!r} (first used on line "
+                        f"{seen_ids[example.id]})"
+                    )
+                seen_ids[example.id] = line_number
+                examples.append(example)
             except (ValueError, KeyError) as error:
                 raise ValueError(f"{path}:{line_number}: {error}") from error
     return examples
