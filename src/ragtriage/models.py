@@ -64,6 +64,14 @@ class QAExample(_Frozen):
     # independent; group statistics resample whole groups. No metric uses it.
     group: str | None = None
 
+    @model_validator(mode="after")
+    def _id_and_question_not_blank(self) -> Self:
+        if not self.id.strip():
+            raise ValueError("question id must not be blank")
+        if not self.question.strip():
+            raise ValueError(f"question text must not be blank (id {self.id!r})")
+        return self
+
     @property
     def answerable(self) -> bool:
         return bool(self.evidence)

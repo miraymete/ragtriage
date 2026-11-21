@@ -113,3 +113,19 @@ def test_duplicate_question_ids_are_rejected_with_both_line_numbers(tmp_path):
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match=r"qa\.jsonl:3:.*duplicate question id 'q1'.*line 1"):
         load_qa_examples(path, {"d": DOCUMENT})
+
+
+@pytest.mark.parametrize(
+    ("row", "message"),
+    [
+        ({"id": "", "question": "a?"}, "question id must not be blank"),
+        ({"id": "  ", "question": "a?"}, "question id must not be blank"),
+        ({"id": "q1", "question": ""}, "question text must not be blank"),
+        ({"id": "q1", "question": " \t"}, "question text must not be blank"),
+    ],
+)
+def test_blank_question_id_or_text_is_rejected_with_line_number(tmp_path, row, message):
+    path = tmp_path / "qa.jsonl"
+    path.write_text(json.dumps(row) + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match=rf"(?s)qa\.jsonl:1:.*{message}"):
+        load_qa_examples(path, {"d": DOCUMENT})
