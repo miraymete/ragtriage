@@ -129,3 +129,11 @@ def test_blank_question_id_or_text_is_rejected_with_line_number(tmp_path, row, m
     path.write_text(json.dumps(row) + "\n", encoding="utf-8")
     with pytest.raises(ValueError, match=rf"(?s)qa\.jsonl:1:.*{message}"):
         load_qa_examples(path, {"d": DOCUMENT})
+
+
+@pytest.mark.parametrize("content", ["", "\n  \n"])
+def test_test_set_without_questions_is_rejected(tmp_path, content):
+    path = tmp_path / "qa.jsonl"
+    path.write_text(content, encoding="utf-8")
+    with pytest.raises(ValueError, match=r"qa\.jsonl: .*no questions"):
+        load_qa_examples(path, {"d": DOCUMENT})

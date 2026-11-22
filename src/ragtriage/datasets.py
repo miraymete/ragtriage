@@ -80,4 +80,6 @@ def load_qa_examples(path: str | Path, documents: Mapping[str, Document]) -> lis
                 examples.append(example)
             except (ValueError, KeyError) as error:
                 raise ValueError(f"{path}:{line_number}: {error}") from error
+    if not examples:
+        raise ValueError(f"{path}: the test set has no questions (empty file or only blank lines)")
     return examples
