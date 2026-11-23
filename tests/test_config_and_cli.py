@@ -247,3 +247,20 @@ def test_load_config_rejects_a_cache_path_that_is_a_directory(workspace, cache_p
     )
     with pytest.raises(ValueError, match=r"cache path .* is a directory"):
         load_config(path)
+
+
+@pytest.mark.parametrize("name", ['""', '"   "'])
+def test_load_config_rejects_a_blank_experiment_name(workspace, name):
+    path = write_config(
+        workspace,
+        f"""\
+        documents: docs
+        dataset: qa.jsonl
+        experiments:
+          - name: {name}
+            chunker: {{type: fixed, size: 10}}
+            retriever: {{type: bm25}}
+        """,
+    )
+    with pytest.raises(ValidationError, match="name must not be blank"):
+        load_config(path)

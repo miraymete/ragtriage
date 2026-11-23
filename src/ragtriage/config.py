@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Annotated, Literal, Self
 
 import yaml
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ragtriage.pipelines.chunking import validate_fixed
 
@@ -81,9 +81,17 @@ RetrieverSpec = Annotated[BM25Spec | VectorSpec, Field(discriminator="type")]
 
 
 class Experiment(_Spec):
-    name: str = Field(min_length=1)
+    name: str
     chunker: ChunkerSpec
     retriever: RetrieverSpec
+
+    @field_validator("name")
+    @classmethod
+    def _name_not_blank(cls, value: str) -> str:
+        # Names label rows in tables and reports, so whitespace alone is as bad as nothing.
+        if not value.strip():
+            raise ValueError("experiment name must not be blank")
+        return value
 
 
 class PriceSpec(_Spec):
