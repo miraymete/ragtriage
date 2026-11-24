@@ -137,3 +137,10 @@ def test_test_set_without_questions_is_rejected(tmp_path, content):
     path.write_text(content, encoding="utf-8")
     with pytest.raises(ValueError, match=r"qa\.jsonl: .*no questions"):
         load_qa_examples(path, {"d": DOCUMENT})
+
+
+def test_load_documents_names_the_file_that_is_not_utf8(tmp_path):
+    (tmp_path / "good.txt").write_text("İzmir", encoding="utf-8")
+    (tmp_path / "bad.txt").write_bytes("İzmir".encode("cp1254") + b"\xff")
+    with pytest.raises(ValueError, match=r"bad\.txt.*not valid UTF-8"):
+        load_documents(tmp_path)

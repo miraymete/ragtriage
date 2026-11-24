@@ -18,8 +18,14 @@ def load_documents(directory: str | Path) -> dict[str, Document]:
     documents = {}
     for path in paths:
         # newline="" keeps the bytes as they are: translating line endings would shift every span.
-        with path.open(encoding="utf-8", newline="") as handle:
-            documents[path.stem] = Document(id=path.stem, text=handle.read())
+        try:
+            with path.open(encoding="utf-8", newline="") as handle:
+                text = handle.read()
+        except UnicodeDecodeError as error:
+            raise ValueError(
+                f"{path}: not valid UTF-8 ({error.reason} at byte {error.start})"
+            ) from error
+        documents[path.stem] = Document(id=path.stem, text=text)
     return documents
 
 
