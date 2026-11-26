@@ -7,6 +7,7 @@ from typer.testing import CliRunner
 
 from ragtriage.cli import app
 from ragtriage.config import (
+    AnthropicSpec,
     FixedChunker,
     RecursiveChunker,
     SentenceChunker,
@@ -109,6 +110,14 @@ def test_depth_must_exceed_k(workspace):
     )
     with pytest.raises(ValidationError, match="must exceed k"):
         load_config(path)
+
+
+@pytest.mark.parametrize("model", ["   ", "\t"])
+def test_model_names_cannot_be_whitespace_only(model):
+    with pytest.raises(ValidationError, match="model must not be blank"):
+        SentenceTransformerSpec(type="sentence_transformers", model=model)
+    with pytest.raises(ValidationError, match="model must not be blank"):
+        AnthropicSpec(provider="anthropic", model=model)
 
 
 def test_sentence_transformer_model_name_cannot_be_empty():

@@ -15,6 +15,14 @@ class _Spec(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
 
+def _not_blank(value: str) -> str:
+    # A name made only of whitespace passes `min_length=1` but still fails much later, at model
+    # load or at the first API call.
+    if not value.strip():
+        raise ValueError("model must not be blank")
+    return value
+
+
 class FixedChunker(_Spec):
     type: Literal["fixed"]
     size: int
@@ -60,6 +68,8 @@ class SentenceTransformerSpec(_Spec):
     query_prefix: str = ""
     document_prefix: str = ""
     batch_size: int = Field(default=32, ge=1)
+
+    _model_not_blank = field_validator("model")(_not_blank)
 
 
 EmbedderSpec = Annotated[HashingEmbedderSpec | SentenceTransformerSpec, Field(discriminator="type")]
@@ -112,6 +122,8 @@ class AnthropicSpec(_Spec):
     max_retries: int = Field(default=2, ge=0)
     timeout_s: float = Field(default=120.0, gt=0)
     price_per_mtok: PriceSpec | None = None
+
+    _model_not_blank = field_validator("model")(_not_blank)
 
 
 class CacheSpec(_Spec):
