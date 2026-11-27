@@ -82,6 +82,11 @@ def test_load_documents_rejects_empty_directory(tmp_path):
         load_documents(tmp_path)
 
 
+def test_load_documents_says_when_the_folder_does_not_exist(tmp_path):
+    with pytest.raises(ValueError, match="documents folder not found"):
+        load_documents(tmp_path / "typo")
+
+
 @pytest.mark.parametrize(
     ("line", "message"),
     [

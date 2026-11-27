@@ -12,6 +12,9 @@ from ragtriage.models import Document, Evidence, QAExample
 
 def load_documents(directory: str | Path) -> dict[str, Document]:
     """Read every .txt file in a directory. The file stem becomes the document id."""
+    if not Path(directory).is_dir():
+        # A typo in `documents:` should not read as "the folder exists but is empty".
+        raise ValueError(f"documents folder not found: {directory}")
     paths = sorted(Path(directory).glob("*.txt"))
     if not paths:
         raise ValueError(f"no .txt files in {directory}")
